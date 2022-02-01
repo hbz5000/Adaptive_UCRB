@@ -1,0 +1,58 @@
+# cm2015x.rsp  (Gage Baseflow Distribution to Ungaged Locations)
+#
+# This file is Step 3 of the Colorado River StateMod model development.
+# Step 1 = cm2015.rsp file with StateMod option 1
+# Step 2 = Mixed Station Model
+# Step 3 = This (cm2015x).rsp file with StateMod option 9 - Distributes Baseflow Gains at Gages to ungaged locations
+# Step 4 = cm2015H.rsp and cm2015H2.rsp file with StateMod option 2 (Step 1 and 2 calibration)
+# Step 5 = use cm2015B.rsp  file with StateMod option 2
+# For addition details, please refer to the ReadMe.txt and the users manual documentation
+#
+# StateMod Response File
+#
+# Type                                    Name
+# ______________________________________  ________________________________________________________________________                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
+# CONTROL DATA
+Control                                 = cm2015.ctl 
+# RIVER NETWORK 
+River_Network                           = cm2015.rin 
+# CONSUMPTIVE USE DATA
+StateCU_Structure                       = cm2015.str   
+ConsumptiveWaterRequirement_Monthly     = cm2015.iwr
+IrrigationPractice_Yearly               = cm2015.ipy
+# STREAM GAGE DATA
+StreamEstimate_Coefficients             = cm2015.rib                                                                                                                                                                                                                                                
+StreamGage_Historic_Monthly             = cm2015.xbf                                                                                                                                                                                                                                        
+StreamGage_Station                      = cm2015.ris    
+Stream_Base_Monthly                     = cm2015.xbf
+# DIVERSION DATA
+Diversion_Station                       = cm2015.dds    
+Diversion_Right                         = cm2015.ddr
+Diversion_Demand_Monthly                = cm2015H.ddm 
+Diversion_Historic_Monthly              = cm2015.ddh 
+# RESERVOIR DATA 
+Evaporation_Annual                      = cm2015.eva 
+Reservoir_Historic_Monthly              = cm2015.eom 
+Reservoir_Target_Monthly                = cm2015H.tar
+Reservoir_Station                       = cm2015.res 
+Reservoir_Right                         = cm2015.rer                                                                                                                                                                                                                                            
+# INSTREAM FLOW DATA  
+Instreamflow_Demand_AverageMonthly      = cm2015.ifa                                                                                                                                                                                                                                             
+Instreamflow_Demand_Monthly             = cm2015.ifm    
+Instreamflow_Right                      = cm2015.ifr                                                                                                                                                                                                                                                   
+Instreamflow_Station                    = cm2015.ifs 
+# OPERATIONs & PLAN DATA
+Operational_Right                       = cm2015H.opr                                                                                                                                                                                                                                                    
+Plan_Data                               = cm2015.pln 
+# DELAY TABLE DATA
+DelayTable_Monthly                      = cm2015.dly                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                 
+                                                                                                                                                                                                                                       
+                                                                                                                                                                                                                                           
+                                                                                                                                                                                                                                                  
+
+                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                             
+                                                                                                                                                                                                                                               
+                                                                                                                                                                                                                                          

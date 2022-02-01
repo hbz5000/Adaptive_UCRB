@@ -11,6 +11,7 @@ import matplotlib.pylab as pl
 from skimage import exposure
 import seaborn as sns
 import sys
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 
 class Mapper():
@@ -401,6 +402,59 @@ class Mapper():
           num /= 1024.0
       return "%.1f %s%s" % (num, 'Yi', suffix)
 
+  def plot_scalar_raster(self, projection_string, raster_filename):
+    ds = gdal.Open(raster_filename + '.tif')
+    #geotransform - tells you where pixel 0 (x,y) is in the coordinate system and the scale of pixels to coordinates
+    geotransform = ds.GetGeoTransform()
+    ##clip the raster - note: this is done in UTM coordinates before projection
+    ##so that you don't need to re-project entire contiguous US
+    clip_name = raster_filename + '_clipped.tif'
+    #ds = gdal.Translate(clip_name, ds, projWin = [geotransform[0] + x_bound[0]*geotransform[1], geotransform[3] + y_bound[0]*geotransform[5], geotransform[0] + x_bound[1]*geotransform[1], geotransform[3] +y_bound[1]*geotransform[5]])
+    output_name = 'UCRB_analysis-master/Shapefiles_UCRB/06-B5-mos/colorado_mosaic' + '_projected.tif'
+    ##re-project raster from UTM to LAT/LONG
+    gdal.Warp(output_name, ds, dstSRS = projection_string)
+    raster = rasterio.open(output_name)
+    ind_rgb = raster.read()
+    band_min, band_max = np.min(ind_rgb), np.max(ind_rgb)
+    ind_rgb = (ind_rgb * 0.8 + (band_max - band_min) * 0.2)      
+    image = rasterio.plot.reshape_as_image(ind_rgb)
+    spatial_extent = rasterio.plot.plotting_extent(raster)
+    self.ax.imshow(image, extent = spatial_extent, cmap='terrain_r', vmin = band_min, vmax = band_max)
+
+
+  def add_inset_figure(self, shapefile_name, box_lim_x, box_lim_y, inset_lim_x, inset_lim_y, epsg_num, shapefile2 = 'none1'):
+
+    map_shape = gpd.read_file(shapefile_name)
+    map_shape = map_shape.to_crs(epsg = epsg_num)
+    map_shape_state = map_shape[map_shape['STUSPS'] == 'TX']
+    p2 = Polygon([(box_lim_x[0], box_lim_y[0]), (box_lim_x[1], box_lim_y[0]), (box_lim_x[1], box_lim_y[1]), (box_lim_x[0], box_lim_y[1])])
+    df1 = gpd.GeoDataFrame({'geometry': p2, 'df1':[1,1]})
+    df1.crs = {'init' :'epsg:'+ str(epsg_num)}
+    axins = inset_axes(self.ax, width = '25%', height = '25%', loc = 3, bbox_to_anchor=(0,0,1,1), bbox_transform=self.ax.transAxes)
+    map_shape_state.plot(ax = axins, facecolor = 'beige', edgecolor = 'black', linewidth = 1.0, alpha = 0.6, zorder = 5)
+    if shapefile2 == 'none':
+      p3 = Polygon([(inset_lim_x[0], inset_lim_y[0]), (inset_lim_x[1], inset_lim_y[0]), (inset_lim_x[1], inset_lim_y[1]), (inset_lim_x[0], inset_lim_y[1])])
+      df2 = gpd.GeoDataFrame({'geometry': p3, 'df2':[1,1]})
+      df2.plot(ax = axins, facecolor = 'steelblue', edgecolor = 'steelblue', linewidth = 1.0, alpha = 1.0, zorder = 1)
+      
+    df1.plot(ax = axins, facecolor = 'indianred', alpha = 0.6,zorder = 25)
+    extent = map_shape_state.bounds
+    extent = pd.DataFrame(extent)
+    extent = extent.reset_index()
+    index = 0
+    x_extent = extent.loc[index, 'maxx'] - extent.loc[index, 'minx']
+    y_extent = extent.loc[index, 'maxy'] - extent.loc[index, 'miny']
+    xl = extent.loc[index, 'minx'] - x_extent/8.0
+    xr = extent.loc[index, 'maxx'] + x_extent/8.0
+    by = extent.loc[index, 'miny'] - y_extent/8.0
+    uy = extent.loc[index, 'maxy'] + y_extent/8.0
+
+    axins.set_xlim(xl, xr)
+    axins.set_ylim(by, uy)
+    axins.set_xticklabels('')
+    axins.set_yticklabels('')      
+
+
 
 def add_ocean(self, filename, x_left):
   coastline = gpd.read_file(project_folder + '/CALFEWS_shapes/coastline/hj484bt5758.shp')
@@ -421,3 +475,4 @@ def add_ocean(self, filename, x_left):
   df1 = gpd.GeoDataFrame(values, geometry = geo_list)
   df1.crs = {'init' :'epsg:4326'}
   df1.plot(ax = self.ax)
+

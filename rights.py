@@ -51,20 +51,23 @@ class Rights():
   is_Reservoir = 0
 
 
-  def __init__(self, right_name, right_priority, right_decree):
+  def __init__(self, right_name, right_priority, right_decree, fill_type = 0):
     self.name = right_name
     self.priority = right_priority
     self.decree = right_decree
     self.decree_af = right_decree * 1.98 * 30.0
     self.constraining_call = -1
+    self.fill_type = fill_type
     
   def initialize_timeseries(self, timesteps):
-    self.monthly_demand = np.zeros(timesteps)
-    self.monthly_deliveries = np.zeros(timesteps)
-    self.distance_from_call = np.zeros(timesteps)
-    self.monthly_snowpack = np.zeros(timesteps)
-    self.percent_filled = np.zeros(timesteps)
-    self.percent_filled_single = np.zeros(timesteps)
+    self.historical_monthly_demand = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.historical_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.adaptive_monthly_demand = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.adaptive_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.distance_from_call = np.zeros(len(timesteps))
+    self.monthly_snowpack = np.zeros(len(timesteps))
+    self.percent_filled = np.zeros(len(timesteps))
+    self.percent_filled_single = np.zeros(len(timesteps))
       
   def object_equals(self, other):
     ##This function compares two instances of an object, returns True if all attributes are identical.

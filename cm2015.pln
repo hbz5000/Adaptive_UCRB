@@ -1,0 +1,48 @@
+# Exhibit 1.6
+# *.pln; Plan (Augmentation and Terms and Condition) data
+#
+#
+#     Card 1   Control
+#     format:  (a12, a24, 1x, 3i8, 6(1x,a12))
+#
+#     Plan ID:          	PId
+#     Plan Name:        	PName
+#     Plan Location     	iPsta
+#     Plan On/Off:      	POn:
+#     Plan Type                 iptype  1=Terms and Conditions (T&C)
+#                              		2=Well Augmentation
+#                                       3=CU Reuse to a Reservoir
+#                                       4=CU Reuse to a Diversion 
+#                                       5=Reuse to a Reservoir from TMtn
+#                                       6=Reuse to a Diversion from TMtn 
+#                                       7=TMtn Reuse
+#                                       8=Recharge Plan
+#                                       9=OOP Plan
+#     Plan Efficiency (%)       Peff (enter 999 to use default (source structures data)
+#                               enter -n to read 12 values
+#     Plan Return Flow ID       iPrf (enter 999 to use default (source structures data)
+#     Plan Failure Switch       iPfail  0=do not stop for a failure
+#                                       1=do stop for a failure
+#     Plan Source               Psource A referece (comment) typically used to describe
+#                                       the source this plan is associted with.
+#                                       Note this data is currently only used if the source is a reservoir
+#     Plan Account		iPacc   Reservoir Account
+#
+#                                                      
+# ID        Name                    RiverLoc      ON/Off  iPtype    Peff    iPrf  iPfail   Psto1 Psource         iPacc
+#----------eb----------------------eb----------eb------eb------eb------eb------eb------eb------exb----------exb------e
+#
+3604683PL   Con-Hoosier_OOP_Plan     3604683PL      1       9     999     999       0       0 GM_Reservoir        0
+3603570PL   Upper_Blue_OOP_Plan      3603570PL      1       9     999     999       0       0 GM_Reservoir        0
+3604684PL   Roberts_Tun_OOP_Plan     3604684PL      1       9     999     999       0       0 GM_Reservoir        0
+3604512PL   Dillon_OOP_Plan          3604512PL      1       9     999     999       0       0 GM_Reservoir        0
+HUPLimitPLN Replacement_Limit_Pln    HUPLimitPLN    1      12     999     999       0       0 GM_Reservoir        0
+CSULimitPLN Replacement_Limit_Pln    CSULimitPLN    1      12     999     999       0       0 UpperBlueLks        0
+ColRivPln   Replacement_Limit_Pln    ColRivPln      1      11       0       0       0       0 7201329_D           0
+3900563PL   Silt_Plan                3900563PL      1      13       0       0       0       0 3900563             0
+563PL       Dry_Elk_Plan             563PL          1      13       0       0       0       0 Diversion           0
+3505PL      FIRCO_Plan               3505PL         1      13       0       0       0       0 Diversion           0
+#Drag_Pln    Dragert_Plan             Drag_Pln       1      11       0       0       0       0 3900710             0
+#Getty_Pln   Getty_Plan               Getty_Pln      1      11       0       0       0       0 7201478             0
+#Pacif_Pln   Pacific_Plan             Pacif_Pln      1      11       0       0       0       0 7201523             0
+#Eaton_Pln   Eaton_Plan               Eaton_Pln      1      11       0       0       0       0 3900712             0         

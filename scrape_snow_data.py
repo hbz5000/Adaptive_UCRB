@@ -9,7 +9,7 @@ import io
 import numpy as np
 import os
 
-project_folder = 'snow_data/'
+project_folder = 'UCRB_analysis-master/'
 station_types = ['SNOW', 'SNOWTEL']
 station_filenames = [project_folder + 'colorado_snow_stations.csv', project_folder + 'colorado_snow_courses.csv']
 station_titles = ['Station', 'station_name']
@@ -150,7 +150,7 @@ for basin_name in df_dict:
       basinwide_average.append(-999.9)
   
   df_dict[basin_name]['basinwide_average'] = basinwide_average
-  df_dict[basin_name].to_csv(project_folder + basin_name[0:8] + '.csv')
+  df_dict[basin_name].to_csv(project_folder + 'Adaptive_experiment/Snow_Data/' + basin_name[0:8] + '.csv')
 
 
 

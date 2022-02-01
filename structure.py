@@ -58,11 +58,12 @@ class Structure():
     self.rights_list = []
     self.rights_objects = {}
     self.downstream_structures = []
-    
+    self.struct_type = 'structure'
+    self.use_adaptive = False
   def initialize_right(self, right_name, right_priority, right_decree):
     self.rights_list.append(right_name)
     self.rights_objects[right_name] = Rights(right_name, right_priority, right_decree)
-  
+    
   def make_sorted_rights_list(self):
     priority_rank = []
     for right_name in self.rights_list:
@@ -72,18 +73,101 @@ class Structure():
     for priority_counter in range(0, len(priority_order)):
       self.sorted_rights.append(self.rights_list[priority_order[priority_counter]])
   
+  
+  def update_demand_rights(self, date_use):
+    structure_demands = self.adaptive_monthly_demand.loc[date_use, 'demand']
+    rights_counter = 0
+    rights_demands = np.zeros(len(self.sorted_rights))
+    for ind_right in self.sorted_rights:
+      rights_demands[rights_counter] = min(max(structure_demands, 0.0), self.rights_objects[ind_right].decree_af)
+      structure_demands -=  min(max(structure_demands, 0.0), self.rights_objects[ind_right].decree_af)
+      rights_counter += 1
+      
+    counter = 0
+    for ind_right in self.sorted_rights:
+      self.rights_objects[ind_right].adaptive_monthly_demand[date_use, 'demand'] = rights_demands[counter]
+      counter += 1
+
+  def update_delivery_rights(self, date_use):
+    structure_deliveries = self.adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+    rights_counter = 0
+    rights_demands = np.zeros(len(self.sorted_rights))
+    for ind_right in self.sorted_rights:
+      rights_demands[rights_counter] = min(max(structure_deliveries, 0.0), self.rights_objects[ind_right].decree_af)
+      structure_deliveries -=  min(max(structure_deliveries, 0.0), self.rights_objects[ind_right].decree_af)
+      rights_counter += 1
+      
+    counter = 0
+    for ind_right in self.sorted_rights:
+      self.rights_objects[ind_right].adaptive_monthly_demand[date_use, 'demand'] = rights_demands[counter]
+      counter += 1
+
+  
   def assign_demand_rights(self):
     for ind_right in self.sorted_rights:
-      self.rights_objects[ind_right].initialize_timeseries(len(self.monthly_demand))
-      
-    for month_step in range(0, len(self.monthly_demand)):
-      remaining_demand = self.monthly_demand[month_step] * 1.0
-      remaining_delivery = self.monthly_deliveries[month_step] * 1.0
+      self.rights_objects[ind_right].initialize_timeseries(self.historical_monthly_demand.index)
+    structure_demands = np.asarray(self.historical_monthly_demand['demand'])
+    rights_demands = np.zeros((len(self.historical_monthly_demand.index), len(self.sorted_rights)))
+    for month_step in range(0, len(self.historical_monthly_demand.index)):
+      remaining_demand = structure_demands[month_step]
+      rights_counter = 0
       for ind_right in self.sorted_rights:
-        self.rights_objects[ind_right].monthly_demand[month_step] = min(max(remaining_demand, 0.0), self.rights_objects[ind_right].decree_af)
-        self.rights_objects[ind_right].monthly_deliveries[month_step] = min(max(remaining_delivery, 0.0), self.rights_objects[ind_right].decree_af)
+        rights_demands[month_step, rights_counter] = min(max(remaining_demand, 0.0), self.rights_objects[ind_right].decree_af)
         remaining_demand -=  min(max(remaining_demand, 0.0), self.rights_objects[ind_right].decree_af)
+        rights_counter += 1
+     
+    if self.use_adaptive:
+      structure_demands_adaptive = np.asarray(self.adaptive_monthly_demand['demand'])
+      rights_demands_adaptive = np.zeros((len(self.adaptive_monthly_demand.index), len(self.sorted_rights)))
+      for month_step in range(0, len(self.adaptive_monthly_demand.index)):
+        remaining_demand = structure_demands_adaptive[month_step]
+        rights_counter = 0
+        for ind_right in self.sorted_rights:
+          rights_demands_adaptive[month_step, rights_counter] = min(max(remaining_demand, 0.0), self.rights_objects[ind_right].decree_af)
+          remaining_demand -=  min(max(remaining_demand, 0.0), self.rights_objects[ind_right].decree_af)
+          rights_counter += 1
+        
+    counter = 0
+    for ind_right in self.sorted_rights:
+      self.rights_objects[ind_right].historical_monthly_demand['demand'] = rights_demands[:,counter]
+      if self.use_adaptive:
+        self.rights_objects[ind_right].adaptive_monthly_demand['demand'] = rights_demands_adaptive[:,counter]
+      else:
+        self.rights_objects[ind_right].adaptive_monthly_demand['demand'] = rights_demands[:,counter]
+      counter += 1
+
+  def assign_delivery_rights(self):
+    structure_deliveries = np.asarray(self.historical_monthly_deliveries['deliveries'])
+    rights_delivery = np.zeros((len(self.historical_monthly_deliveries.index), len(self.sorted_rights)))
+    for month_step in range(0, len(self.historical_monthly_deliveries.index)):
+      remaining_delivery = structure_deliveries[month_step]
+      rights_counter = 0
+      for ind_right in self.sorted_rights:
+        rights_delivery[month_step, rights_counter] = min(max(remaining_delivery, 0.0), self.rights_objects[ind_right].decree_af)
         remaining_delivery -=  min(max(remaining_delivery, 0.0), self.rights_objects[ind_right].decree_af)
+        rights_counter += 1
+        
+    if self.use_adaptive:
+      structure_deliveries_adaptive = np.asarray(self.adaptive_monthly_deliveries['deliveries'])
+      rights_delivery_adaptive = np.zeros((len(self.adaptive_monthly_deliveries.index), len(self.sorted_rights)))
+      for month_step in range(0, len(self.adaptive_monthly_deliveries.index)):
+        remaining_delivery = structure_deliveries_adaptive[month_step]
+        rights_counter = 0
+        for ind_right in self.sorted_rights:
+          rights_delivery_adaptive[month_step, rights_counter] = min(max(remaining_delivery, 0.0), self.rights_objects[ind_right].decree_af)
+          remaining_delivery -=  min(max(remaining_delivery, 0.0), self.rights_objects[ind_right].decree_af)
+          rights_counter += 1
+    
+    
+    counter = 0
+    for ind_right in self.sorted_rights:
+      self.rights_objects[ind_right].historical_monthly_deliveries['deliveries'] = rights_delivery[:,counter]
+      if self.use_adaptive:
+        self.rights_objects[ind_right].adaptive_monthly_deliveries['deliveries'] = rights_delivery_adaptive[:,counter]
+      else:
+        self.rights_objects[ind_right].adaptive_monthly_deliveries['deliveries'] = rights_delivery[:,counter]
+      counter += 1
+        
 
   def find_senior_downstream_call(self, calling_structures, calling_rights):
     most_senior = 99999999999.999

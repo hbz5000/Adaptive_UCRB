@@ -1,0 +1,47 @@
+#
+# cm2005.dly
+# Return flow delay table developed by LRE January, 2003
+# Based on general analyses documented in LRE Delay Pattern Memorandum, 1/2003
+#
+# Adjusted by San Juan team to include incidental losses in types 1, 2, and 8 is USBR recomd. 7/2003 ra
+# Pattern 1 is previous Pattern 1 at incidental loss rate of 3% occuring in first month
+# Pattern 2 is previous Pattern 2 at incidental loss rate of 3% occuring in first month
+# Pattern 3 is not used
+# Pattern 4 is immediate returns, used for M&I and Hydropower diverisons
+# Pattern 5 is used to represent snow-making return flows
+# Pattern 6 is previous Pattern 1
+# Pattern 7 is previous Pattern 2
+#
+# Note - the next note refers to the previous patterns
+#
+# Note - only return flow pattern 1 and 2 have been replaced below.  Return Flow
+#        pattern 1 should be used for lands irrigated relatively close to a live
+#        stream or drain (<1200 feet).  Return Flow patter 2 should be used for lands
+#        irrigating further from a live stream (>1200 feet).  Pattern 3 is not used
+#        in the western slope models.  Pattern 4 is immediate return used for municipal
+#        and industrial diversions.  Pattern 5 is not used in the western slope models.
+#
+#     Card 1   Control
+#     format:  (16x, i8, 12f8.0)                   
+#
+#     ID       idly:            Delay table id
+#     Ret      dlyrat(1-n,idl): Return for month n, station idl
+#
+#     Card 1   Control
+#     format:  (16x, i8, 12f8.0)                   
+#
+#     ID       idly:            Delay table id
+#     Ret      dlyrat(1-n,idl): Return for month n, station idl
+#
+# ID           Ret 1   Ret 2   Ret 3   Ret 4   Ret 5   Ret 6   Ret 7   Ret 8   Ret 9  Ret 10  Ret 11  Ret 12
+#----------eb------eb------eb------eb------eb------eb------eb------eb------eb------eb------eb------eb------e
+#
+       1 9   75.6    11.3     3.2     2.2      1.6    1.2     0.8     0.6      0.5
+       2 12  57.4    14.5     7.2     5.0      3.7    2.7     2.0     1.5      1.1     0.8     0.6     0.5
+       3 28  53.8     5.6     3.6     2.9      2.5    2.2     2.0     1.8      1.8     1.6     1.6     1.5
+              1.4     1.4     1.2     1.2      1.2    1.1     1.0     1.0      1.0     0.9     0.9     0.8
+              0.8     0.8     0.7     0.7
+       4 1  100.0
+       5 5    0.0     0.0     0.0     0.0    100.0
+       6 9   78.6    11.3     3.2     2.2      1.6    1.2     0.8     0.6      0.5
+       7 12  60.4    14.5     7.2     5.0      3.7    2.7     2.0     1.5      1.1     0.8     0.6     0.5
