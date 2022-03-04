@@ -14,6 +14,109 @@ import sys
 import scipy.stats as stats
 from datetime import datetime, timedelta
 
+def create_input_data_dictionary(baseline_scenario, adaptive_scenario):
+  input_data_dictionary = {}
+  ###geographic layout
+  input_data_dictionary['hydrography'] = 'Shapefiles_UCRB/NHDPLUS_H_1401_HU4_GDB.gdb'
+  input_data_dictionary['structures'] = 'Shapefiles_UCRB/Div_5_structures.shp'
+  ##basin labels
+  input_data_dictionary['HUC4'] = ['1401',]
+  input_data_dictionary['HUC8'] = ['14010001', '14010002', '14010003', '14010004', '14010005']
+  ##locations of large agricultural aggregations
+  ###snow data
+  input_data_dictionary['snow'] = 'Snow_Data/'
+
+  ###statemod input data
+  ##monthly demand data
+  input_data_dictionary['structure_demand'] = 'input_files/cm2015' + baseline_scenario + '.ddm'
+  ##water rights data
+  input_data_dictionary['structure_rights'] = 'input_files/cm2015' + baseline_scenario + '.ddr'
+  ##reservoir fill rights data
+  input_data_dictionary['reservoir_rights'] = 'input_files/cm2015' + baseline_scenario + '.rer'
+  ##full natural flow data
+  input_data_dictionary['natural flows'] = 'cm2015x.xbm'
+  ##flow/node network
+  input_data_dictionary['downstream'] = 'input_files/cm2015.rin'
+  ##historical reservoir data
+  input_data_dictionary['historical_reservoirs'] = 'input_files/cm2015.eom'
+  ##call data
+  input_data_dictionary['calls'] = 'output_files/cm2015' + baseline_scenario + '.xca'
+
+  ###statemod output data
+  ##reservoir storage data
+  input_data_dictionary['reservoir_storage'] = 'output_files/cm2015' + baseline_scenario + '.xre'
+  ##diversion data
+  input_data_dictionary['deliveries'] = 'output_files/cm2015' + baseline_scenario + '.xdd'
+
+  ##adaptive reservoir output data
+  input_data_dictionary['reservoir_storage_new'] = 'cm2015' + adaptive_scenario + '.xre'
+  ##adaptive diversion data
+  input_data_dictionary['deliveries_new'] = 'cm2015' + adaptive_scenario + '.xdd'
+  ##adaptive demand data
+  input_data_dictionary['structure_demand_new'] = 'cm2015' + adaptive_scenario + '.ddm'
+
+  input_data_dictionary['snow'] = 'Snow_Data/'
+  input_data_dictionary['irrigation'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div5_Irrig_2015.shp'
+  input_data_dictionary['ditches'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div5_2015_Ditches.shp'
+  input_data_dictionary['aggregated_diversions'] = 'output_files/aggregated_diversions.txt'
+
+
+  return input_data_dictionary
+
+def create_et_benefits():
+  marginal_net_benefits = {}
+  et_requirements = {}
+
+  marginal_net_benefits['VEGETABLES'] = 506.0
+  marginal_net_benefits['ALFALFA'] = 492.0
+  marginal_net_benefits['BARLEY'] = 12.0
+  marginal_net_benefits['BLUEGRASS'] = 401.0
+  marginal_net_benefits['CORN_GRAIN'] = 173.0
+  marginal_net_benefits['DRY_BEANS'] = 85.0
+  marginal_net_benefits['GRASS_PASTURE'] = 181.0
+  marginal_net_benefits['SOD_FARM'] = 181.0
+  marginal_net_benefits['SMALL_GRAINS'] = 75.0
+  marginal_net_benefits['SORGHUM_GRAIN'] = 311.0
+  marginal_net_benefits['WHEAT_FALL'] = 112.0
+  marginal_net_benefits['WHEAT_SPRING'] = 112.0
+
+  effective_precip = 3.1
+  et_requirements['VEGETABLES'] = 26.2
+  et_requirements['ALFALFA'] = 44.0
+  et_requirements['BARLEY'] = 22.2
+  et_requirements['BLUEGRASS'] = 30.0
+  et_requirements['CORN_GRAIN'] = 26.9
+  et_requirements['DRY_BEANS'] = 18.1
+  et_requirements['GRASS_PASTURE'] = 30.0
+  et_requirements['SOD_FARM'] = 30.0
+  et_requirements['SMALL_GRAINS'] = 22.2
+  et_requirements['SORGHUM_GRAIN'] = 24.5
+  et_requirements['WHEAT_FALL'] = 22.2
+  et_requirements['WHEAT_SPRING'] = 22.2
+  et_requirements['ORCHARD_WITH_COVER'] = 22.2
+  et_requirements['ORCHARD_WO_COVER'] = 22.2
+  et_requirements['GRAPES'] = 22.2
+
+  total_npv_costs = 0.0
+  counter = 0
+  grapes_planting_costs = [-6385.0, -2599.0, -1869.0, 754.0, 2012.0, 2133.0, 2261.0] 
+  grapes_baseline_revenue = [2261.0, 2261.0, 2261.0, 2261.0, 2261.0, 2261.0, 2261.0]
+  for cost, baseline in zip(grapes_planting_costs, grapes_baseline_revenue):
+    total_npv_costs +=  (baseline - cost)/np.power(1.025, counter)
+    counter += 1
+  marginal_net_benefits['GRAPES'] = total_npv_costs
+
+  total_npv_costs = 0.0
+  counter = 0
+  orchard_planting_costs = [-5183.0, -2802.0, -2802.0, 395.0, 5496.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0] 
+  orchard_baseline_revenue = [9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, -5183.0, -2802.0, -2802.0, 395.0, 5496.0]
+  for cost, baseline in zip(orchard_planting_costs, orchard_baseline_revenue):
+    total_npv_costs +=  (baseline - cost)/np.power(1.025, counter)
+    counter += 1
+  marginal_net_benefits['ORCHARD_WITH_COVER'] = total_npv_costs
+  marginal_net_benefits['ORCHARD_WO_COVER'] = total_npv_costs
+  
+  return marginal_net_benefits, et_requirements
 
 def read_text_file(filename):
   with open(filename,'r') as f:
@@ -321,6 +424,8 @@ def read_structure_deliveries(delivery_data, initial_year, end_year, read_from_f
       if data:
         if len(data) > 1 and data[0] !='#':
           struct_id = str(data[0].strip())
+          if struct_id == 'Baseflow' or struct_id == 'NA':
+            struct_id = str(data[1].strip())
           try:
             month_id = data[3].strip()
             year_id = int(data[2].strip())
@@ -384,6 +489,9 @@ def update_structure_deliveries(delivery_data, update_year, update_month, read_f
         if use_line:
           if year_number == update_year and month_number == update_month:
             struct_id = str(data[0].strip())
+            if struct_id == 'Baseflow' or struct_id == 'NA':
+              struct_id = str(data[1].strip())
+
             structure_deliveries[struct_id] = float(data[16].strip()) - float(data[15].strip())
                     
   return structure_deliveries  
@@ -593,6 +701,7 @@ def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, 
   change_points_df = pd.DataFrame()    
   change_points_df['structure'] = [diversion_id,]
   change_points_df['demand'] = [storage_change,]
+  change_points_df['date'] = [datetime(comp_year, comp_month, 1, 0, 0),]
 
   return change_points_df
 

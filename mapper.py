@@ -98,8 +98,6 @@ class Mapper():
       all_val = values[key]
       if value_lim == 'None':
         value_lim = (min(values[key]), max(values[key]))
-      print(np.min(all_val[float_num]))
-      print(np.max(all_val[float_num]))
       
       if np.min(all_val[float_num]) < 0.0 and np.max(all_val[float_num]) > 0.0:
         if log_toggle == 1:
@@ -351,8 +349,6 @@ class Mapper():
       real_values = ind_rgb[~np.isnan(ind_rgb)]
       for contrast_range in [(0.2, 99.8) ,(0.5, 99.5), (2.0, 98.0)]:
         pLow, pHigh = np.percentile(real_values[real_values > 0.0], contrast_range)
-        print(pLow, end = " ")
-        print(pHigh)
       pLow = max_bright[0] 
       pHigh = max_bright[1] 
       ind_rgb = exposure.rescale_intensity(ind_rgb, in_range=(pLow,pHigh))
@@ -402,7 +398,7 @@ class Mapper():
           num /= 1024.0
       return "%.1f %s%s" % (num, 'Yi', suffix)
 
-  def plot_scalar_raster(self, projection_string, raster_filename):
+  def plot_scalar_raster(self, projection_string, raster_filename, cmap):
     ds = gdal.Open(raster_filename + '.tif')
     #geotransform - tells you where pixel 0 (x,y) is in the coordinate system and the scale of pixels to coordinates
     geotransform = ds.GetGeoTransform()
@@ -410,7 +406,7 @@ class Mapper():
     ##so that you don't need to re-project entire contiguous US
     clip_name = raster_filename + '_clipped.tif'
     #ds = gdal.Translate(clip_name, ds, projWin = [geotransform[0] + x_bound[0]*geotransform[1], geotransform[3] + y_bound[0]*geotransform[5], geotransform[0] + x_bound[1]*geotransform[1], geotransform[3] +y_bound[1]*geotransform[5]])
-    output_name = 'UCRB_analysis-master/Shapefiles_UCRB/06-B5-mos/colorado_mosaic' + '_projected.tif'
+    output_name = raster_filename + '_projected.tif'
     ##re-project raster from UTM to LAT/LONG
     gdal.Warp(output_name, ds, dstSRS = projection_string)
     raster = rasterio.open(output_name)
@@ -419,36 +415,47 @@ class Mapper():
     ind_rgb = (ind_rgb * 0.8 + (band_max - band_min) * 0.2)      
     image = rasterio.plot.reshape_as_image(ind_rgb)
     spatial_extent = rasterio.plot.plotting_extent(raster)
-    self.ax.imshow(image, extent = spatial_extent, cmap='terrain_r', vmin = band_min, vmax = band_max)
+    self.ax.imshow(image, extent = spatial_extent, cmap=cmap, vmin = band_max*(-0.33), vmax = band_max)
+
+  def add_colorbar_offmap(self, colorbar_title, colorbar_labels):
+    self.fig.subplots_adjust(right=0.9)
+    cbar_ax = self.fig.add_axes([0.9187, 0.15, 0.025, 0.7])
+    sm = plt.cm.ScalarMappable(cmap=pl.cm.gnuplot, norm=plt.Normalize(vmin=0, vmax=100))
+    clb1 = plt.colorbar(sm, cax = cbar_ax, ticks=[0, 50, 100])
+    clb1.ax.set_yticklabels(['0', '1', '2']) 
+    clb1.ax.invert_yaxis()
+    clb1.ax.tick_params(labelsize=20)
+    clb1.ax.set_ylabel(colorbar_title, rotation=90, fontsize = 14, fontname = 'Gill Sans MT', fontweight = 'bold')
+    for item in clb1.ax.yaxis.get_ticklabels():
+      item.set_fontname('Gill Sans MT')  
+      item.set_fontsize(12)
 
 
-  def add_inset_figure(self, shapefile_name, box_lim_x, box_lim_y, inset_lim_x, inset_lim_y, epsg_num, shapefile2 = 'none1'):
+  def add_inset_figure(self, map_shape_state, box_lim_x, box_lim_y, inset_lim_x, inset_lim_y, epsg_num, shapefile2 = 'none', use_ocean = False, inset_location_number = 3):
 
-    map_shape = gpd.read_file(shapefile_name)
-    map_shape = map_shape.to_crs(epsg = epsg_num)
-    map_shape_state = map_shape[map_shape['STUSPS'] == 'TX']
     p2 = Polygon([(box_lim_x[0], box_lim_y[0]), (box_lim_x[1], box_lim_y[0]), (box_lim_x[1], box_lim_y[1]), (box_lim_x[0], box_lim_y[1])])
     df1 = gpd.GeoDataFrame({'geometry': p2, 'df1':[1,1]})
     df1.crs = {'init' :'epsg:'+ str(epsg_num)}
-    axins = inset_axes(self.ax, width = '25%', height = '25%', loc = 3, bbox_to_anchor=(0,0,1,1), bbox_transform=self.ax.transAxes)
+    axins = inset_axes(self.ax, width = '25%', height = '25%', loc = inset_location_number, bbox_to_anchor=(0,0,1,1), bbox_transform=self.ax.transAxes)
     map_shape_state.plot(ax = axins, facecolor = 'beige', edgecolor = 'black', linewidth = 1.0, alpha = 0.6, zorder = 5)
     if shapefile2 == 'none':
       p3 = Polygon([(inset_lim_x[0], inset_lim_y[0]), (inset_lim_x[1], inset_lim_y[0]), (inset_lim_x[1], inset_lim_y[1]), (inset_lim_x[0], inset_lim_y[1])])
       df2 = gpd.GeoDataFrame({'geometry': p3, 'df2':[1,1]})
-      df2.plot(ax = axins, facecolor = 'steelblue', edgecolor = 'steelblue', linewidth = 1.0, alpha = 1.0, zorder = 1)
+      if use_ocean:
+        df2.plot(ax = axins, facecolor = 'steelblue', edgecolor = 'steelblue', linewidth = 1.0, alpha = 1.0, zorder = 1)
       
     df1.plot(ax = axins, facecolor = 'indianred', alpha = 0.6,zorder = 25)
-    extent = map_shape_state.bounds
+    #extent = map_shape_state.bounds
+    extent = df2.bounds
     extent = pd.DataFrame(extent)
     extent = extent.reset_index()
     index = 0
-    x_extent = extent.loc[index, 'maxx'] - extent.loc[index, 'minx']
-    y_extent = extent.loc[index, 'maxy'] - extent.loc[index, 'miny']
-    xl = extent.loc[index, 'minx'] - x_extent/8.0
-    xr = extent.loc[index, 'maxx'] + x_extent/8.0
-    by = extent.loc[index, 'miny'] - y_extent/8.0
-    uy = extent.loc[index, 'maxy'] + y_extent/8.0
-
+    x_extent = np.max(extent.loc[:, 'maxx']) - np.min(extent.loc[:, 'minx'])
+    y_extent = np.max(extent.loc[:, 'maxy']) - np.min(extent.loc[:, 'miny'])
+    xl = np.min(extent.loc[:, 'minx']) - x_extent/8.0
+    xr = np.max(extent.loc[:, 'maxx']) + x_extent/8.0
+    by = np.min(extent.loc[:, 'miny']) - y_extent/8.0
+    uy = np.max(extent.loc[:, 'maxy']) + y_extent/8.0
     axins.set_xlim(xl, xr)
     axins.set_ylim(by, uy)
     axins.set_xticklabels('')

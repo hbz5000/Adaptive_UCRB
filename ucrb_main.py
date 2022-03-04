@@ -41,55 +41,7 @@ import crss_reader as crss
 from plotter import Plotter
 
 ####Create Filename Dictionary####
-input_data_dictionary = {}
-###geographic layout
-input_data_dictionary['hydrography'] = 'Shapefiles_UCRB/NHDPLUS_H_1401_HU4_GDB.gdb'
-input_data_dictionary['structures'] = 'Shapefiles_UCRB/Div_5_structures.shp'
-##basin labels
-input_data_dictionary['HUC4'] = ['1401',]
-input_data_dictionary['HUC8'] = ['14010001', '14010002', '14010003', '14010004', '14010005']
-##locations of large agricultural aggregations
-input_data_dictionary['combined_structures'] = {}
-input_data_dictionary['combined_structures']['14010001'] = ['001', '002', '003', '004', '005', '006', '007', '008', '009', '010', 
-                                                            '011', '012', '013', '014', '015', '016', '020', '021', '022', '023', 
-                                                            '024', '025', '026', '027', '028', '032']
-input_data_dictionary['combined_structures']['14010002'] = ['017', '018', '019']
-input_data_dictionary['combined_structures']['14010003'] = ['029', '030', '031']
-input_data_dictionary['combined_structures']['14010004'] = ['033', '034', '035', '036', '037', '038', '039', '040']
-input_data_dictionary['combined_structures']['14010005'] = ['041', '042', '043', '044', '045', '046', '047', '048', '049', '050', 
-                                                            '051', '052', '053', '054', '055', '056', '057', '058', '059', '060', 
-                                                            '061', '062', '063', '064', '065']
-###snow data
-input_data_dictionary['snow'] = 'Snow_Data/'
-
-###statemod input data
-##monthly demand data
-input_data_dictionary['structure_demand'] = 'input_files/cm2015B.ddm'
-##water rights data
-input_data_dictionary['structure_rights'] = 'input_files/cm2015B.ddr'
-##reservoir fill rights data
-input_data_dictionary['reservoir_rights'] = 'input_files/cm2015B.rer'
-##full natural flow data
-input_data_dictionary['natural flows'] = 'cm2015x.xbm'
-##flow/node network
-input_data_dictionary['downstream'] = 'input_files/cm2015.rin'
-##historical reservoir data
-input_data_dictionary['historical_reservoirs'] = 'input_files/cm2015.eom'
-##call data
-input_data_dictionary['calls'] = 'output_files/cm2015B.xca'
-
-###statemod output data
-##reservoir storage data
-input_data_dictionary['reservoir_storage'] = 'output_files/cm2015B.xre'
-##diversion data
-input_data_dictionary['deliveries'] = 'output_files/cm2015B.xdd'
-
-##adaptive reservoir output data
-input_data_dictionary['reservoir_storage_new'] = 'cm2015A.xre'
-##adaptive diversion data
-input_data_dictionary['deliveries_new'] = 'cm2015A.xdd'
-##adaptive demand data
-input_data_dictionary['structure_demand_new'] = 'cm2015A.ddm'
+input_data_dictionary = crss.create_input_data_dictionary('B', 'A')
 
 print('create basin')
 #Create Basin class with the same extent as StateMod Basin
@@ -161,6 +113,22 @@ adaptive_release_timeseries = baseline_release_timeseries.copy(deep = True)
 adaptive_release_timeseries.index = pd.to_datetime(adaptive_release_timeseries.index)
 #calculate water supply metrics (inc. snowpack & storage) at each of the indentified reservoirs
 
+
+print('set structure types')
+structures_ucrb = gpd.read_file(input_data_dictionary['structures'])
+irrigation_ucrb = gpd.read_file(input_data_dictionary['irrigation'])
+ditches_ucrb = gpd.read_file(input_data_dictionary['ditches'])
+irrigation_ucrb = irrigation_ucrb.to_crs(epsg = 3857)
+
+agg_diversions = pd.read_csv(input_data_dictionary['aggregated_diversions'])
+aggregated_diversions = {}
+for index, row in agg_diversions.iterrows():
+  if row['statemod_diversion'] in aggregated_diversions:
+    aggregated_diversions[row['statemod_diversion']].append(str(row['individual_diversion']))
+  else:
+    aggregated_diversions[row['statemod_diversion']] = [str(row['individual_diversion']), ]
+ucrb.set_structure_types(aggregated_diversions, irrigation_ucrb, ditches_ucrb, structures_ucrb)
+
 print('calculate initial water supply metrics')
 snow_coefs_tot = {}
 for res in ucrb.reservoir_list:
@@ -173,6 +141,9 @@ res_thres['3704516'] = 50.0
 res_thres['5003668'] = 50.0
 res_thres['5103709'] = 120.0
 res_thres['5104055'] = 600.0
+all_change1 = pd.DataFrame()
+all_change2 = pd.DataFrame()
+all_change3 = pd.DataFrame()
 print('availability')
 crss.initializeDDM(demand_data, 'cm2015A.ddm')
 for res in ['5104055',]:
@@ -206,7 +177,8 @@ for res in ['5104055',]:
         current_physical_supply = adaptive_release_timeseries.loc[datetime_val, res + '_physical_supply']
         change_points1, last_right, last_structure = ucrb.find_adaptive_purchases(downstream_data, res, datetime_val, current_control_location, current_physical_supply)
         change_points2 = ucrb.find_buyout_partners(last_right, last_structure, res, datetime_val)
-        
+        all_change1 = pd.concat([all_change1, change_points1])
+        all_change2 = pd.concat([all_change2, change_points2])
         change_points = pd.concat([change_points1, change_points2])
         crss.writenewDDM(demand_data, change_points,  year_num + 1, month_num)
         os.system("StateMod_Model_15.exe cm2015A -simulate")        
@@ -214,6 +186,7 @@ for res in ['5104055',]:
         reservoir_storage_data_a = crss.read_text_file(input_data_dictionary['reservoir_storage_new'])
         
         change_points3 = crss.compare_storage_scenarios(reservoir_storage_data_b, reservoir_storage_data_a, datetime_val.year, datetime_val.month, res, '5104634')
+        all_change3 = pd.concat([all_change3, change_points3])
         change_points = pd.concat([change_points, change_points3])
         print(change_points)        
         crss.writenewDDM(demand_data, change_points, year_num + 1, month_num)
@@ -234,3 +207,6 @@ for res in ['5104055',]:
         
         adaptive_toggle = 1
 
+  all_change1.to_csv('output_files/purchases_' + res + '.csv')
+  all_change2.to_csv('output_files/buyouts_' + res + '.csv')
+  all_change3.to_csv('output_files/diversions_' + res + '.csv')
