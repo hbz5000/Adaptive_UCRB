@@ -141,15 +141,31 @@ class Basin():
     self.structures_objects[idnum] = Reservoir(reservoir_name, idnum, capacity)
     self.reservoir_list.append(idnum)
     
-  def update_structure_demand_delivery(self, new_demands, new_deliveries, date_use):
+  def update_structure_demand_delivery(self, new_demands, new_deliveries, monthly_max, date_use):
 
     for this_structure in new_demands:
-      self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand'] = new_demands[this_structure]
+      if this_structure in monthly_max:
+        self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand'] = min(new_demands[this_structure], monthly_max[this_structure][date_use.month - 1])
+      else:
+        self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand'] = new_demands[this_structure] * 1.0
       self.structures_objects[this_structure].update_demand_rights(date_use)
     for this_structure in new_deliveries:
-      self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] = new_deliveries[this_structure]
+      self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] = new_deliveries[this_structure] * 1.0
       self.structures_objects[this_structure].update_delivery_rights(date_use)    
 
+  def adjust_structure_deliveries(self):
+    monthly_deliveries = {}
+    for structure_name in self.structures_objects:
+      if np.max(self.structures_objects[structure_name].historical_monthly_demand['demand']) > 900000.0:
+        monthly_deliveries[structure_name] = np.zeros(12)
+        for index, row in self.structures_objects[structure_name].historical_monthly_deliveries.iterrows():
+          monthly_deliveries[structure_name][index.month - 1] = max(row['deliveries'], monthly_deliveries[structure_name][index.month - 1])
+        for datetime_val in self.structures_objects[structure_name].historical_monthly_demand.index:
+          self.structures_objects[structure_name].historical_monthly_demand.loc[datetime_val, 'demand'] = monthly_deliveries[structure_name][datetime_val.month - 1] * 1.0
+          self.structures_objects[structure_name].adaptive_monthly_demand.loc[datetime_val, 'demand'] = monthly_deliveries[structure_name][datetime_val.month - 1] * 1.0
+
+    return monthly_deliveries
+          
   def set_structure_demands(self, structure_demands, structure_demands_adaptive = 'none'):
     len_hist_demands = 0
     for structure_name in structure_demands:
@@ -158,7 +174,7 @@ class Basin():
         try:
           self.structures_objects[structure_name].adaptive_monthly_demand = pd.DataFrame(structure_demands_adaptive[structure_name].values, index = structure_demands_adaptive.index, columns = ['demand',])
         except:
-          self.structures_objects[structure_name].adaptive_monthly_demand = pd.DataFrame(structure_demands[structure_name].values, index = structure_demands.index, columns = ['demand',])
+          self.structures_objects[structure_name].adaptive_monthly_demand = self.structures_objects[structure_name].historical_monthly_demand.copy(deep = True)
         
         len_hist_demands = len(structure_demands[structure_name])
       else:
@@ -167,14 +183,14 @@ class Basin():
         try:
           self.structures_objects[structure_name].adaptive_monthly_demand = pd.DataFrame(structure_demands_adaptive[structure_name].values, index = structure_demands_adaptive.index, columns = ['demand',])
         except:
-          self.structures_objects[structure_name].adaptive_monthly_demand = pd.DataFrame(structure_demands[structure_name].values, index = structure_demands.index, columns = ['demand',])
+          self.structures_objects[structure_name].adaptive_monthly_demand = self.structures_objects[structure_name].historical_monthly_demand.copy(deep = True)
         
     for structure_name in self.structures_objects:
       try:
         len_hist_demands = len(self.structures_objects[structure_name].historical_monthly_demand)
       except:
         self.structures_objects[structure_name].historical_monthly_demand = pd.DataFrame(np.zeros(len(structure_demands.index)), index = structure_demands.index, columns = ['demand',])
-        self.structures_objects[structure_name].adaptive_monthly_demand = pd.DataFrame(np.zeros(len(structure_demands.index)), index = structure_demands.index, columns = ['demand',])
+        self.structures_objects[structure_name].adaptive_monthly_demand = self.structures_objects[structure_name].historical_monthly_demand.copy(deep = True)
       self.structures_objects[structure_name].make_sorted_rights_list()
       if isinstance(structure_demands_adaptive, pd.DataFrame):
         self.structures_objects[structure_name].use_adaptive = True
@@ -188,7 +204,7 @@ class Basin():
         try:
           self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(structure_deliveries_adaptive[structure_name].values, index = structure_deliveries_adaptive.index, columns = ['deliveries',])
         except:        
-          self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(structure_deliveries[structure_name].values, index = structure_deliveries.index, columns = ['deliveries',])
+          self.structures_objects[structure_name].adaptive_monthly_deliveries = self.structures_objects[structure_name].historical_monthly_deliveries.copy(deep = True)
         
       else:
         self.structures_objects[structure_name] = Structure(structure_name, 'unknown')
@@ -199,7 +215,7 @@ class Basin():
         try:
           self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(structure_deliveries_adaptive[structure_name].values, index = structure_deliveries_adaptive.index, columns = ['deliveries',])
         except:
-          self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(structure_deliveries[structure_name].values, index = structure_deliveries.index, columns = ['deliveries',])
+          self.structures_objects[structure_name].adaptive_monthly_deliveries = self.structures_objects[structure_name].historical_monthly_deliveries.copy(deep = True)
 
     for structure_name in self.structures_objects:
       no_xdd = False
@@ -209,7 +225,7 @@ class Basin():
         no_xdd = True
       if no_xdd:
         self.structures_objects[structure_name].historical_monthly_deliveries = pd.DataFrame(np.zeros(len(structure_deliveries.index)), index = structure_deliveries.index, columns = ['deliveries',])
-        self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(np.zeros(len(structure_deliveries.index)), index = structure_deliveries.index, columns = ['deliveries',])
+        self.structures_objects[structure_name].adaptive_monthly_deliveries = self.structures_objects[structure_name].historical_monthly_deliveries.copy(deep = True)
       if isinstance(structure_deliveries_adaptive, pd.DataFrame):
         self.structures_objects[structure_name].use_adaptive = True
       self.structures_objects[structure_name].assign_delivery_rights()
@@ -284,6 +300,7 @@ class Basin():
             elif  structure_name == '5100958' or structure_name == '5101070':
               self.structures_objects[structure_name].structure_types.append('Municipal')
             else:
+              print('structure_type', end = " ")
               print(structure_name, end = " ")
               print(ind_structure)
 
@@ -325,7 +342,10 @@ class Basin():
           elif ind_structure == '70FD1' or ind_structure == '70FD2':
             self.structures_objects[structure_name].structure_types.append('None')
           elif ind_structure[:7] == '7200813':
-            self.structures_objects[structure_name].structure_types.append('Irrigation')
+            if ind_structure == '7200813':
+              self.structures_objects[structure_name].structure_types.append('Irrigation')
+            else:
+              self.structures_objects[structure_name].structure_types.append('Municipal')
           elif ind_structure == '7202003_M':
             self.structures_objects[structure_name].structure_types.append('Minimum Flow')
           elif ind_structure == '72_GJMun' or ind_structure == '72_UWCD' or ind_structure == 'ChevDem':
@@ -346,7 +366,10 @@ class Basin():
             self.structures_objects[structure_name].structure_types.append('None')
           elif ind_structure == '7202001_2':
             self.structures_objects[structure_name].structure_types.append('Minimum Flow')
+          elif ind_structure[:2] == '09' or ind_structure[-3:] == 'Dwn':
+            self.structures_objects[structure_name].structure_types.append('Minimum Flow')
           else:
+            print('none type')
             print(structure_name, end = " ")
             print(ind_structure)
     
@@ -635,19 +658,16 @@ class Basin():
       if 'Irrigation' in self.structures_objects[station_id].structure_types:
         try:
           for r_id in self.structures_objects[station_id].rights_list:
+            if station_id == '5100848':
+              print(len(available_purchases['demand']), end = " ")
+              print(station_id, end = " ")
+              print(r_id, end = " ")
+              print(self.structures_objects[station_id].rights_list)
             available_purchases['demand'].append(self.structures_objects[station_id].rights_objects[r_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'])
             available_purchases['priority'].append(self.structures_objects[station_id].rights_objects[r_id].priority)
             available_purchases['right'].append(r_id)
             available_purchases['structure'].append(station_id)
             available_purchases['position'].append(curr_position)
-            print(control_location, end = " ")
-            print(res_station, end =" ")
-            print(date_use, end = " ")
-            print(self.structures_objects[station_id].rights_objects[r_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], end = " ")
-            print(self.structures_objects[station_id].rights_objects[r_id].priority, end = " ")
-            print(r_id, end = " ")
-            print(station_id, end = " ")
-            print(curr_position)
         except:
           pass
       if station_id == control_location:
@@ -664,639 +684,93 @@ class Basin():
     
     change_points_structure = []
     change_points_demand = []
+    change_points_buyout_demand = []
+    change_points_buyout_purchase = []
     change_points_date = []
 
     total_demand = 0.0
+    toggle_exchange = 0
     for x in range(1, len(sorted_demand)):
-      if sorted_position[-1*x] == 1:
+      this_position = sorted_position[-1*x]
+      if this_position == 1:
         total_demand += sorted_demand[-1*x]
-      this_right = sorted_rights[-1*x]
-      this_structure = sorted_structs[-1*x]
-      total_right_delivery = self.structures_objects[this_structure].rights_objects[this_right].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
-      total_structure_demand = self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand']
-      total_structure_deliveries = self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
-      total_demand_reduction = max(total_structure_demand - total_structure_deliveries, 0.0) + total_right_delivery
-      print(x, end = " ")
-      print(total_physical_supply, end = " ")
-      print(total_demand, end = " ")
-      print(this_structure, end = " ")
-      print(total_demand_reduction, end = " ")
-      print(total_structure_demand, end = " ")
-      print(total_structure_deliveries, end = " ")
-      print(total_right_delivery)
+      if toggle_exchange == 0 or this_position == 0:
+        this_right = sorted_rights[-1*x]
+        this_structure = sorted_structs[-1*x]
+        total_right_delivery = self.structures_objects[this_structure].rights_objects[this_right].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+        total_structure_demand = self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand']
+        total_structure_deliveries = self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+        total_demand_reduction = max(total_structure_demand - total_structure_deliveries, 0.0)
 
-      if total_right_delivery > 0.0:        
-        change_points_structure.append(this_structure)
-        change_points_demand.append(total_demand_reduction)
-        change_points_date.append(date_use)
-      if total_demand >= total_physical_supply:
-        last_right = sorted_rights[-1*x]
-        last_structure = sorted_structs[-1*x]
-        break
+        if total_right_delivery > 0.0:
+          print(x, end = " ")
+          print(this_structure, end = " ")
+          print(sorted_structs[-1*x])        
+          change_points_structure.append(this_structure)
+          change_points_demand.append(total_right_delivery)
+          change_points_buyout_demand.append(total_structure_deliveries)
+          change_points_buyout_purchase.append(total_demand_reduction)
+          change_points_date.append(date_use)
+        if total_demand >= total_physical_supply:
+          last_right = sorted_rights[-1*x]
+          last_structure = sorted_structs[-1*x]
+          toggle_exchange = 1
 
     if total_demand < total_physical_supply:
       last_right = sorted_rights[0]
       last_structure = sorted_structs[0]
+    print(len(available_purchases['structure']))
+    print(len(sorted_structs))
+    print(len(change_points_structure))
+    change_points_purchase_df = pd.DataFrame()
+    change_points_purchase_df['structure'] = change_points_structure
+    change_points_purchase_df['demand'] = change_points_demand
+    change_points_purchase_df['date'] = change_points_date
 
-    change_points_df = pd.DataFrame()
-    change_points_df['structure'] = change_points_structure
-    change_points_df['demand'] = change_points_demand
-    change_points_df['date'] = change_points_date
+    change_points_buyout_df = pd.DataFrame()
+    change_points_buyout_df['structure'] = change_points_structure
+    change_points_buyout_df['demand'] = change_points_buyout_demand
+    change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
+    change_points_buyout_df['date'] = change_points_date
+    
 
-    return change_points_df, last_right, last_structure
+    return change_points_purchase_df, change_points_buyout_df, last_right, last_structure
           
   
-  def find_most_junior_diverter_timeseries(self, downstream_data, release_data, res_station, dates_use, year_start, year_end):
-    station_id_column_length = 12
-    station_id_column_start = 0
-
-    diversion_structures = ['5104601', '5104603', '5104625', '5104634', '5104655', '5104700', '3900574', '3704614', '3804613', '3804617', '3804625', '5103710', '5100958', '5103695']
-    for j in range(0,len(downstream_data)):
-      if downstream_data[j][0] != '#':
-        first_line = int(j * 1)
-        break
-    column_labels = ['right', 'structure', 'volume', 'delivery']
-    rights_points = pd.DataFrame(index = release_data.index, columns = column_labels)
-    change_points_year = []
-    change_points_month = []
-    change_points_structure = []
-    change_points_demand = []
-    change_points_delivery = []
-    for index, row in release_data.iterrows():
-
-      all_rights = []
-      all_demand = []
-      all_structs = []
-      all_priorities = []
-      all_position = []
-      curr_position = 0
-      control_location = row[res_station + '_location']
-      total_physical_supply = row[res_station + '_physical_supply']
-      
-      for j in range(first_line,len(downstream_data)):
-        station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
-        if station_id == res_station:
-          curr_position = 1
-        if station_id in diversion_structures:
-          a = 1
-        else:
-          try:
-            for r_id in self.structures_objects[station_id].rights_list:
-              all_rights.append(r_id)
-              all_structs.append(station_id)
-              all_demand.append(self.structures_objects[station_id].rights_objects[r_id].historical_monthly_deliveries.loc[index, 'deliveries'])
-              all_priorities.append(self.structures_objects[station_id].rights_objects[r_id].priority)
-              all_position.append(curr_position)
-          except:
-            pass
-         
-        if station_id == control_location:
-          break        
-      all_rights = np.asarray(all_rights)
-      all_structs = np.asarray(all_structs)
-      all_priorities = np.asarray(all_priorities)
-      all_demand = np.asarray(all_demand)
-      all_position = np.asarray(all_position)
-      sorted_order = np.argsort(all_priorities)
-      sorted_demand = all_demand[sorted_order]
-      sorted_rights = all_rights[sorted_order]
-      sorted_structs = all_structs[sorted_order]
-      sorted_position = all_position[sorted_order]
-      total_demand = 0.0
-      counter = 0
-      total_reduced_delivery = 0.0
-      toggle_exchange = 0
-      for x in range(1, len(sorted_demand)):
-        this_position = sorted_position[-1*x]
-        if this_position == 1:
-          total_demand += sorted_demand[-1*x]
-        if toggle_exchange == 0 or this_position == 0:
-          this_right = sorted_rights[-1*x]
-          this_structure = sorted_structs[-1*x]
-          total_right_delivery = self.structures_objects[this_structure].historical_monthly_demand.loc[index, 'demand']
-          total_reduced_delivery = self.structures_objects[this_structure].historical_monthly_deliveries.loc[index, 'deliveries']
-          if total_right_delivery > 0.0 and index in dates_use:        
-            change_points_year.append(index.year)
-            if index.month >= 10:
-              change_points_month.append(index.month-10)
-            else:
-              change_points_month.append(index.month+2)
-
-            change_points_structure.append(this_structure)
-            change_points_demand.append(total_right_delivery)
-            change_points_delivery.append(total_reduced_delivery)
-
-          if total_demand >= total_physical_supply:
-            rights_points.loc[index, 'right'] = sorted_rights[-1*x]
-            rights_points.loc[index, 'structure'] = sorted_structs[-1*x]
-            rights_points.loc[index, 'volume'] = total_physical_supply
-            rights_points.loc[index, 'delivery'] = total_reduced_delivery
-            toggle_exchange = 1
-
-      if total_demand < total_physical_supply:
-        rights_points.loc[index, 'right'] = sorted_rights[0]
-        rights_points.loc[index, 'structure'] = sorted_structs[0]
-        rights_points.loc[index, 'volume'] = total_demand
-        rights_points.loc[index, 'delivery'] = total_reduced_delivery
-
-    change_points_df = pd.DataFrame()
-    change_points_df['year'] = change_points_year
-    change_points_df['month'] = change_points_month
-    change_points_df['structure'] = change_points_structure
-    change_points_df['demand'] = change_points_demand
-    change_points_df['delivery'] = change_points_delivery
-    change_points_df.to_csv('results/change_points1_' + res_station + '.csv')
-    return rights_points, change_points_df
     
   def find_buyout_partners(self, last_right, last_structure, res_struct_id, date_use):
     
     diversion_structures = ['5104601', '5104603', '5104625', '5104634', '5104655', '5104700', '3900574', '3704614', '3804613', '3804617', '3804625', '5103710', '5100958', '5103695']
     change_points_structure = []
-    change_points_demand = []
+    change_points_buyout_demand = []
+    change_points_buyout_purchase = []
     change_points_date = []
     
+    sri = self.structures_objects[res_struct_id].sorted_rights[0]
+    initial_priority = self.structures_objects[last_structure].rights_objects[last_right].priority
+    end_priority = self.structures_objects[res_struct_id].rights_objects[sri].priority
+    print(initial_priority, end = " ")
+    print(end_priority, end = " ")
+    print(last_structure)
     for right_priority, right_id, struct_id in zip(self.rights_stack_priorities, self.rights_stack_ids, self.rights_stack_structure_ids):
-      if struct_id not in diversion_structures:
-        #for sri in self.structures_objects[res_struct_id].sorted_rights:
-        sri = self.structures_objects[res_struct_id].sorted_rights[0]
-        initial_priority = self.structures_objects[last_structure].rights_objects[last_right].priority
-        end_priority = self.structures_objects[res_struct_id].rights_objects[sri].priority
-        if right_priority >= initial_priority and right_priority < end_priority:
-          total_extra_demand = max(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'] - self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
-          print(struct_id, end = " ")
-          print(total_extra_demand, end = " ")
-          print(right_priority, end = " ")
-          print(initial_priority, end = " ")
-          print(end_priority)
-          if total_extra_demand > 0.0:
-            change_points_structure.append(struct_id)
-            change_points_demand.append(total_extra_demand)
-            change_points_date.append(date_use)              
+      if right_priority >= initial_priority and right_priority < end_priority:
+        total_demand_level = self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] * 1.0
+        total_extra_demand = max(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'] - self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
+        if total_extra_demand > 0.0:
+          change_points_structure.append(struct_id)
+          change_points_buyout_demand.append(total_demand_level)
+          change_points_buyout_purchase.append(total_extra_demand)
+          change_points_date.append(date_use)              
                 
-    change_points_df = pd.DataFrame()    
-    change_points_df['structure'] = change_points_structure
-    change_points_df['demand'] = change_points_demand
-    change_points_df['date'] = change_points_date
+    change_points_buyout_df = pd.DataFrame()
+    change_points_buyout_df['structure'] = change_points_structure
+    change_points_buyout_df['demand'] = change_points_buyout_demand
+    change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
+    change_points_buyout_df['date'] = change_points_date
 
-    return change_points_df
-            
-  def find_informal_transfer_networks(self, rights_points, r_id, dates_use, year_start, year_end):
-    informal_transfer_network_size = {}
-    sorted_rights_list = self.structures_objects[r_id].sorted_rights
-    change_points_year = []
-    change_points_month = []
-    change_points_structure = []
-    change_points_demand = []
-    change_points_deliveries = []
-    diversion_structures = ['5104601', '5104603', '5104625', '5104634', '5104655', '5104700', '3900574', '3704614', '3804613', '3804617', '3804625', '5103710', '5100958', '5103695']
-    for sri in sorted_rights_list:
-      informal_transfer_network_size[sri] = np.zeros((len(rights_points.index), 2))
-      
-    date_count = 0
-    for index, row in rights_points.iterrows():
-      for sri in sorted_rights_list:
-        informal_transfer_network_size[sri][date_count, 1] = row['volume']
-      if row['volume'] == 0.0 or pd.isna(row['right']):
-        for sri in sorted_rights_list:
-          informal_transfer_network_size[sri][date_count, 0] = 0.0
-      else:
-        for right_priority, right_id, struct_id in zip(self.rights_stack_priorities, self.rights_stack_ids, self.rights_stack_structure_ids):
-          if struct_id in diversion_structures:
-            a = 1
-          else:
-            for sri in sorted_rights_list:
-              initial_priority = self.structures_objects[row['structure']].rights_objects[row['right']].priority
-              end_priority = self.structures_objects[r_id].rights_objects[sri].priority
-              if right_priority >= initial_priority and right_priority < end_priority:
-                if index in dates_use:
-                  total_extra_demand = max(self.structures_objects[struct_id].historical_monthly_demand.loc[index, 'demand'] - self.structures_objects[struct_id].historical_monthly_deliveries.loc[index, 'deliveries'], 0.0)
-                  right_extra_demand = max(self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_demand.loc[index, 'demand'] - self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_deliveries.loc[index, 'deliveries'], 0.0)
-                  if total_extra_demand > 0.0:
-                    change_points_year.append(index.year)
-                    if index.month >= 10:
-                      change_points_month.append(index.month-10)
-                    else:
-                      change_points_month.append(index.month+2)
-                    change_points_structure.append(struct_id)
-                    change_points_demand.append(total_extra_demand)      
-                    change_points_deliveries.append(right_extra_demand)      
-                  elif total_extra_demand <0.0:
-                    print(index.year, end = " ")
-                    print(index.month, end = " ")
-                    print(struct_id, end = " ")
-                    print(right_id, end =  " ")
-                    print(total_extra_demand, end = " ")
-                    print(self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_demand.loc[index, 'demand'] - self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_deliveries.loc[index, 'deliveries'])
-                informal_transfer_network_size[sri][date_count, 0] += (self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_demand.loc[index, 'demand'] - self.structures_objects[struct_id].rights_objects[right_id].historical_monthly_deliveries.loc[index, 'deliveries'])
-          if right_id == r_id:
-            break
-      date_count += 1
-    informal_transfer_network = pd.DataFrame(index = rights_points.index)
-    for sri in sorted_rights_list:
-      informal_transfer_network[sri + '_paper_available'] = informal_transfer_network_size[sri][:,0]
-      informal_transfer_network[sri + '_physical_available'] = informal_transfer_network_size[sri][:,1]
-    change_points_df = pd.DataFrame()    
-    change_points_df['year'] = change_points_year
-    change_points_df['month'] = change_points_month
-    change_points_df['structure'] = change_points_structure
-    change_points_df['demand'] = change_points_demand
-    change_points_df['delivery'] = change_points_deliveries
-    change_points_df.to_csv('results/change_points2_' + r_id + '.csv')
-    return informal_transfer_network, change_points_df
-    
-    
-  def read_ind_structure_deliveries(self, input_data_dictionary, start_year, end_year):
-    delivery_data = self.read_text_file(input_data_dictionary['deliveries'])
-    structure_name = '5104634'
-    call_structure = '3604512'
-    monthly_deliveries = np.zeros((105, 12))
-    total_delivery = np.zeros(105)
-    month_num = {}
-    counter = 0
-    control_call = {}
-    for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
-      month_num[month_name] = counter
-      counter += 1
-      control_call[month_name] = {}
-    for line in delivery_data:
-      data = line.split()
-      if data:
-        if len(data) > 1 and data[0] !='#':
-          struct_id = str(data[1].strip())
-          if struct_id == structure_name:
-            month_id = data[3].strip()
-            if month_id in month_num:
-              month_number = month_num[month_id]
-              if month_number > 2:
-                year_id = int(data[2].strip()) - start_year - 1
-              else:
-                year_id = int(data[2].strip()) - start_year             
-              monthly_deliveries[year_id, month_number] = float(data[19].strip())
-              total_delivery[year_id] += float(data[19].strip())
-          if struct_id == call_structure:
-            month_id = data[3].strip()          
-            if month_id in month_num:
-              call_struct_id = str(data[33].strip())
-              if call_struct_id in control_call[month_id]:
-                control_call[month_id][call_struct_id] += 1.0/105.0
-              else:
-                control_call[month_id][call_struct_id] = 1.0/105.0
-    total_ranking = np.zeros(105, dtype = np.int64)
-    argsorted_delivery = np.argsort(total_delivery)
-    qalycolors = sns.color_palette('RdYlBu', 105)
-    for x in range(0, len(argsorted_delivery)):
-      total_ranking[argsorted_delivery[x]] = int(x)
-    fig, ax = plt.subplots()
-    for x in range(0, 105):
-      ax.plot(monthly_deliveries[x,:], linewidth = 2.0, color = qalycolors[total_ranking[x]])
-    ax.set_xlim([0, 11])
-    ax.set_ylim([0, 40000])
-    ax.set_ylabel('Monthly TBD', fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')
-    ax.set_xticks([0, 5.5, 11])
-    ax.set_xticklabels(['October', 'March', 'September'], fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')
-    cax = fig.add_axes([0.15, 0.785, 0.04, 0.08])
-    cmap = pl.cm.gnuplot_r
-    my_cmap = ListedColormap(sns.color_palette('RdYlBu').as_hex())
-    sm = plt.cm.ScalarMappable(cmap=my_cmap, norm=plt.Normalize(vmin=0, vmax=8))
-    # fake up the array of the scalar mappable. Urgh...
-    sm._A = []
-    cbar = fig.colorbar(sm, cax=cax)
-    cbar.set_ticks([0, 8])
-    cbar.ax.set_yticklabels(['Fewest Annual TBD (' + str(int(total_delivery[argsorted_delivery[1]]/10000)*10) + ' tAF)', 'Most Annual TBD (' + str(int(total_delivery[argsorted_delivery[104]]/10000)*10) + ' tAF)'], fontsize = 12, weight = 'bold', fontname = 'Gill Sans MT')
-    plt.show()
-    return control_call
-    
-           
-  def create_new_simulation(self, input_data_dictionary, start_year, end_year):
-    print('initalize structure timeseries')
-    for structure_name in self.structures_objects:
-      self.structures_objects[structure_name].monthly_demand = np.zeros((end_year - start_year) * 12)
-      self.structures_objects[structure_name].monthly_deliveries = np.zeros((end_year - start_year) * 12)
-
-    print('read files')
-    demand_data = self.read_text_file(input_data_dictionary['structure_demand'])
-    delivery_data = self.read_text_file(input_data_dictionary['deliveries'])
-
-    print('record demand')
-    self.read_demand_data(demand_data)
-    print('record deliveries')
-    self.read_structure_deliveries(delivery_data, start_year, True)
-    print('assign deliveries to rights')
-    for structure_name in self.structures_objects:
-      self.structures_objects[structure_name].make_sorted_rights_list()
-      self.structures_objects[structure_name].assign_demand_rights()
-      
-    print('locate distance to call')
-    call_structure = self.read_call_files(input_data_dictionary['calls'], start_year)
-    self.find_senior_downstream_call(call_structure, start_year, end_year, True)    
-    self.find_snowpack(start_year, end_year)
-
-        
-  def read_demand_data(self, all_split_data_DDM):
-    toggle_on = 0
-    for j in range(0, len(all_split_data_DDM)):
-      if all_split_data_DDM[j][0] == '#':
-        toggle_on = 1
-      elif toggle_on == 1:
-        first_line = int(j * 1)
-        toggle_on = 0    
-      else:
-        this_row = all_split_data_DDM[j].split('.')
-        row_data = []
-        row_data.extend(this_row[0].split())
-        start_year_index = (int(row_data[0].strip()) - 1909) * 12
-        structure_name = str(row_data[1].strip())
-        self.structures_objects[structure_name].monthly_demand[start_year_index] = float(row_data[2].strip())
-        for x in range(1, 12):
-          self.structures_objects[structure_name].monthly_demand[start_year_index + x] = float(this_row[x].strip())
-
-  def read_rights_data(self, all_data_DDR):
-    column_lengths=[12,24,12,16,8,8]
-    split_line = ['']*len(column_lengths)
-    character_breaks=np.zeros(len(column_lengths),dtype=int)
-    character_breaks[0]=column_lengths[0]
-    for i in range(1,len(column_lengths)):
-      character_breaks[i]=character_breaks[i-1]+column_lengths[i]
-  
-    all_rights_name = []
-    all_rights_priority = []
-    all_rights_decree = []
-    all_rights_structure_name = []
-    for j in range(0,len(all_data_DDR)):
-      if all_data_DDR[j][0] == '#':
-        first_line = int(j * 1)
-      else:
-        split_line[0]=all_data_DDR[j][0:character_breaks[0]]
-        for i in range(1,len(split_line)):
-          split_line[i]=all_data_DDR[j][character_breaks[i-1]:character_breaks[i]]
-        structure_name = str(split_line[2].strip())
-        right_name = str(split_line[0].strip())
-        right_priority = float(split_line[3].strip())
-        if int(split_line[5].strip()) == 1:
-          right_decree = float(split_line[4].strip())
-        else:
-          right_decree = 0.0
-        
-        all_rights_name.append(right_name)
-        all_rights_priority.append(right_priority) 
-        all_rights_decree.append(right_decree)
-        all_rights_structure_name.append(structure_name)
-        if structure_name not in self.structures_objects:
-          self.structures_list['unknown'].append(structure_name)
-          self.structures_list['total'].append(structure_name)
-          self.structures_objects[structure_name] = Structure(structure_name, 'unknown')
-        self.structures_objects[structure_name].initialize_right(right_name, right_priority, right_decree)
-
-    priority_order = np.argsort(np.asarray(all_rights_priority))
-    self.rights_priority_stack = []
-    self.rights_structure_stack = []
-    for stack_order in range(0, len(priority_order)):      
-      self.rights_priority_stack.append(all_rights_name[priority_order[stack_order]])
-      self.rights_structure_stack.append(all_rights_structure_name[priority_order[stack_order]])
-
-  def read_downstream_structure(self, downstream_data):
-    column_lengths=[12,24,13,17,4]
-    split_line = ['']*len(column_lengths)
-    character_breaks=np.zeros(len(column_lengths),dtype=int)
-    character_breaks[0]=column_lengths[0]
-    for i in range(1,len(column_lengths)):
-      character_breaks[i]=character_breaks[i-1]+column_lengths[i]
-
-    id_list = []
-    upstream_list = []
-    downstream_pairs = {}
-    for j in range(0,len(downstream_data)):
-      if downstream_data[j][0] == '#':
-        first_line = int(j * 1)
-      else:
-        split_line[0]=downstream_data[j][0:character_breaks[0]]
-        for i in range(1,len(split_line)):
-          split_line[i]=downstream_data[j][character_breaks[i-1]:character_breaks[i]]
-        downstream_pairs[split_line[0].strip()] = split_line[2].strip()
-
-    for structure_id in downstream_pairs:
-      if structure_id == 'coloup_end':
-        break      
-      if structure_id not in self.structures_objects:
-        self.structures_list['unknown'].append(structure_id)
-        self.structures_list['total'].append(structure_id)
-        self.structures_objects[structure_id] = Structure(structure_id, 'unknown')
-      
-      current_id = downstream_pairs[structure_id]
-      self.structures_objects[structure_id].downstream_structures.append(current_id)
-      
-      while current_id != 'coloup_end' and downstream_pairs[current_id] != 'coloup_end':
-        if current_id not in self.structures_objects:
-          self.structures_list['unknown'].append(current_id)
-          self.structures_list['total'].append(current_id)
-          self.structures_objects[current_id] = Structure(current_id, 'unknown')
-
-        self.structures_objects[structure_id].downstream_structures.append(downstream_pairs[current_id])
-        current_id = downstream_pairs[current_id]
-
-  def create_rights_stack(self):
-    unsorted_rights_stack_priority = []
-    unsorted_rights_stack_ids = []
-    unsorted_rights_stack_structure_ids = []
-    for structure_ids in self.structures_objects:
-      for rights_too in self.structures_objects[structure_ids].rights_list:
-        unsorted_rights_stack_priority.append(self.structures_objects[structure_ids].rights_objects[rights_too].priority)
-        unsorted_rights_stack_ids.append(rights_too)
-        unsorted_rights_stack_structure_ids.append(structure_ids)
-
-    sorted_order = np.argsort(np.asarray(unsorted_rights_stack_priority))
-    self.rights_stack_priorities = []
-    self.rights_stack_ids = []
-    self.rights_stack_structure_ids = []
-    
-    for sorted_order_int in range(0, len(sorted_order)):
-      structure_id = unsorted_rights_stack_structure_ids[sorted_order[sorted_order_int]]
-      rights_id = unsorted_rights_stack_ids[sorted_order[sorted_order_int]]
-      right_demand = self.structures_objects[structure_id].rights_objects[rights_id]
-      self.rights_stack_priorities.append(unsorted_rights_stack_priority[sorted_order[sorted_order_int]])
-      self.rights_stack_ids.append(rights_id)      
-      self.rights_stack_structure_ids.append(structure_id)
-
-
-  def read_structure_deliveries(self, delivery_data, start_year, read_from_file):
-    if read_from_file:
-      all_deliveries = pd.read_csv('UCRB_analysis-master/Sobol_sample/Experiment_files/monthly_delivery_by_struct.csv', index_col = 0)
-      for x in all_deliveries:
-        self.structures_objects[x].monthly_deliveries = all_deliveries[x]
-    else:
-      deliveries_dict = {}
-      month_num = {}
-      counter = 0
-      for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
-        month_num[month_name] = counter
-        counter += 1
-      for line in delivery_data:
-        data = line.split()
-        if data:
-          if len(data) > 1 and data[0] !='#':
-            struct_id = str(data[1].strip())
-            if '(' in struct_id or ')' in struct_id or struct_id[0] == '*':
-              struct_id = 'donotusethis'
-            if struct_id in self.structures_list['total']:
-              month_id = data[3].strip()
-              if month_id in month_num:
-                month_number = month_num[month_id]
-                if month_number > 2:
-                  year_id = int(data[2].strip()) - start_year - 1
-                else:
-                  year_id = int(data[2].strip()) - start_year 
-            
-                total_delivery = float(data[4].strip()) - float(data[17].strip())
-                self.structures_objects[struct_id].monthly_deliveries[year_id * 12 + month_number]  = total_delivery * 1.0
-      for x in self.structures_objects:
-        deliveries_dict[x] = self.structures_objects[x].monthly_deliveries
-      month_count = 10
-      year_count = start_year * 1
-      datetime_index = []
-      for date_count in range(0, len(self.structures_objects[x].monthly_deliveries)):
-        datetime_index.append(datetime(year_count, month_count, 1, 0, 0))
-        month_count += 1
-        if month_count == 13:
-          month_count = 1
-          year_count += 1
-      deliveries_df = pd.DataFrame(deliveries_dict, index = datetime_index)
-      deliveries_df.to_csv('UCRB_analysis-master/Sobol_sample/Experiment_files/monthly_delivery_by_struct.csv')
-          
-  def read_call_files(self, call_file, start_year):
-    call_structs_df = pd.DataFrame(columns = ['year', 'month', 'structure', 'right', 'priority'])
-    counter = 0
-    month_num = {}
-    for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
-      month_num[month_name] = counter
-      counter += 1
-      
-    data_col = False
-    call_struct = []
-    year_call = []
-    month_call = []
-    call_right = []
-    call_priority = []
-    with open (call_file, 'rt') as xca_file:
-      for line in xca_file:
-        data = line.split()
-        if data:
-          if data[0] != '#' and data_col:
-            if len(self.structures_objects[data[5].strip()].sorted_rights) > 0:
-              for ind_right in self.structures_objects[data[5].strip()].sorted_rights:
-                if month_num[data[2].strip()] > 2:
-                  month_step = int(data[1].strip()) - start_year - 1 + month_num[data[2].strip()]
-                else:
-                  month_step = int(data[1].strip()) - start_year + month_num[data[2].strip()]
-                if self.structures_objects[data[5].strip()].rights_objects[ind_right].monthly_demand[month_step] > self.structures_objects[data[5].strip()].rights_objects[ind_right].monthly_deliveries[month_step]:
-                  break
-              call_struct.append(data[5].strip())
-              call_priority.append(self.structures_objects[data[5].strip()].rights_objects[ind_right].priority)
-              call_right.append(ind_right)
-              year_call.append(int(data[1].strip()))
-              month_call.append(data[2].strip())
-          else:
-            data_col = True
-            try:
-              int(data[1])
-            except:
-              data_col = False
-    
-    call_structs_df['year'] = year_call
-    call_structs_df['month'] = month_call
-    call_structs_df['structure'] = call_struct
-    call_structs_df['right'] = call_right
-    call_structs_df['priority'] = call_priority
-
-    return call_structs_df
-    
-  def find_senior_downstream_call(self, call_structure, start_year, end_year, read_from_file):
-
-    if read_from_file:
-      for structure_name in self.structures_objects:
-        structure_call_distance = pd.read_csv('UCRB_analysis-master/Sobol_sample/Experiment_files/call_distances/' + structure_name + '.csv', index_col = 0)
-        for rights_name in structure_call_distance:
-          self.structures_objects[structure_name].rights_objects[rights_name].distance_from_call = structure_call_distance[rights_name] / 10000.0
-    else:     
-      month_list = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
-      total_counter = 0
-
-      for year_num in range(start_year, end_year):
-        year_add = 0
-        for month_name in month_list:
-          if month_name == 'JAN':
-            year_add += 1
-          this_month_calls = call_structure.loc[np.logical_and(call_structure['year'] == (year_num + year_add), call_structure['month'] == month_name)]  
-          calling_structures = []
-          calling_rights = []
-
-          for index_cm, row_cm in this_month_calls.iterrows():
-            structure_name = row_cm['structure']
-            calling_structures.append(structure_name)
-            for ind_right in self.structures_objects[structure_name].sorted_rights:
-              if self.structures_objects[structure_name].rights_objects[ind_right].monthly_demand[total_counter] > self.structures_objects[structure_name].rights_objects[ind_right].monthly_deliveries[total_counter] * 1.0001:
-                break          
-            calling_rights.append(self.structures_objects[structure_name].rights_objects[ind_right].priority)
-          for structure_name in self.structures_objects:
-            self.structures_objects[structure_name].msdr = self.structures_objects[structure_name].find_senior_downstream_call(calling_structures, calling_rights)
-            for rights_name in self.structures_objects[structure_name].rights_list:
-              if self.structures_objects[structure_name].msdr < this_right_priority:
-                self.structures_objects[structure_name].rights_objects[rights_name].constraining_call = self.structures_objects[structure_name].msdr * 1.0
-              else:
-                self.structures_objects[structure_name].rights_objects[rights_name].constraining_call = -1
-                
-          for structure_name in self.structures_objects:
-            for rights_name in self.structures_objects[structure_name].rights_list:
-              this_right_priority = self.structures_objects[structure_name].rights_objects[rights_name].priority * 1.0
-              if self.structures_objects[structure_name].msdr > this_right_priority:
-                stack_distance_boolean = np.logical_and(np.asarray(self.rights_stack_priorities) < self.structures_objects[structure_name].msdr, np.asarray(self.rights_stack_priorities) > this_right_priority)
-                for stack_counter, ind_right, ind_right_struct in zip(stack_distance_boolean, self.rights_stack_ids, self.rights_stack_structure_ids):
-                  if stack_counter:
-                    if ind_right_struct in self.structures_objects[structure_name].downstream_structures or self.structures_objects[ind_right_struct].msdr == self.structures_objects[structure_name].msdr:
-                      self.structures_objects[structure_name].rights_objects[rights_name].distance_from_call[total_counter] += self.structures_objects[ind_right_struct].rights_objects[ind_right].monthly_demand[total_counter]                
-              else:
-                stack_distance_boolean = np.logical_and(np.asarray(self.rights_stack_priorities) > self.structures_objects[structure_name].msdr, np.asarray(self.rights_stack_priorities) < this_right_priority)
-                for stack_counter, ind_right, ind_right_struct in zip(stack_distance_boolean, self.rights_stack_ids, self.rights_stack_structure_ids):
-                  if stack_counter:
-                    if ind_right_struct in self.structures_objects[structure_name].downstream_structures or self.structures_objects[ind_right_struct].msdr == self.structures_objects[structure_name].msdr:
-                      self.structures_objects[structure_name].rights_objects[rights_name].distance_from_call[total_counter] -= self.structures_objects[ind_right_struct].rights_objects[ind_right].monthly_demand[total_counter]
-
-          total_counter += 1
-      for structure_name in self.structures_objects:
-        distance_dict = {}
-        for rights_name in self.structures_objects[structure_name].rights_objects:
-          distance_dict[rights_name] = self.structures_objects[structure_name].rights_objects[rights_name].distance_from_call
-        distance_df = pd.DataFrame(distance_dict)
-        distance_df.to_csv('UCRB_analysis-master/Sobol_sample/Experiment_files/call_distances/' + structure_name + '.csv')
-        
-  def find_snowpack(self, start_year, end_year):
-
-    for struct_name in self.structures_objects:
-      if self.structures_objects[struct_name].basin == 'unknown' or self.structures_objects[struct_name].basin == '14010005':
-        watershed_snow = self.basin_snowpack['14010001']
-      else:
-        watershed_snow = self.basin_snowpack[self.structures_objects[struct_name].basin]
-      year_counter = 0
-      month_counter = 10
-      no_keys = True
-      try:
-        key_list = next(iter(self.structures_objects[struct_name].rights_objects))
-      except:
-        no_keys = False
-      if no_keys:
-        for total_counter in range(0, len(self.structures_objects[struct_name].rights_objects[key_list].monthly_snowpack)):
-          current_date = str(start_year + year_counter) + '-' + str(month_counter).zfill(2) + '-01'
-          for ind_right in self.structures_objects[struct_name].rights_list:
-            self.structures_objects[struct_name].rights_objects[ind_right].monthly_snowpack[total_counter] = watershed_snow.loc[current_date, 'basinwide_average']
-            if self.structures_objects[struct_name].basin == '14010004' and self.structures_objects[struct_name].rights_objects[ind_right].monthly_snowpack[total_counter] < -100:
-              self.structures_objects[struct_name].rights_objects[ind_right].monthly_snowpack[total_counter] = self.basin_snowpack['14010003'].loc[current_date, 'basinwide_average']
-            elif self.structures_objects[struct_name].basin == '14010002' and self.structures_objects[struct_name].rights_objects[ind_right].monthly_snowpack[total_counter] < -100:
-              self.structures_objects[struct_name].rights_objects[ind_right].monthly_snowpack[total_counter] = self.basin_snowpack['14010001'].loc[current_date, 'basinwide_average']
-              
-          month_counter += 1
-          if month_counter == 13:
-            year_counter += 1
-            month_counter = 1
-            
+    return change_points_buyout_df
+                    
+                          
   def read_rights_parameter_file(self):
     right_parameters = pd.read_csv('UCRB_analysis-master\index_figs\ind_right_fill_curve_snow.csv')
     right_parameters2 = pd.read_csv('UCRB_analysis-master\index_figs\ind_right_fill_curve_call.csv')

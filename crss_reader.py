@@ -134,7 +134,7 @@ def initializeDDM(demand_data, filename):
   f.write(demand_data[i])
   i+=1
 
-def writenewDDM(demand_data, structures_purchase, change_year, change_month):    
+def writenewDDM(demand_data, structures_purchase, structures_buyout, change_year, change_month):    
   new_data = []
   use_value = 0
   start_loop = 0
@@ -155,32 +155,43 @@ def writenewDDM(demand_data, structures_purchase, change_year, change_month):
         use_line = False
       
       if use_line and year_num == change_year:
-        this_structure = structures_purchase[structures_purchase['structure'] == structure_name]
-        change = np.zeros(13)
-        if len(this_structure) > 0:
-          row_data.extend(first_data)
-          for index, row in this_structure.iterrows():
-            if row['demand'] < 0.0:
-              change[change_month] = row['demand'] * 1.0
+        this_buyout_structure = structures_buyout[structures_buyout['structure'] == structure_name]
+        this_purchase_structure = structures_purchase[structures_purchase['structure'] == structure_name]
+        new_demands = np.zeros(13)
+        row_data.extend(first_data)
+        toggle_use = False
+        if len(this_buyout_structure) > 0:
+          toggle_use = True
+          for index, row in this_buyout_structure.iterrows():
+            new_demands[change_month] = row['demand'] * 1.0
+        if len(this_purchase_structure) > 0:
+          toggle_use = True
+          for index, row in this_purchase_structure.iterrows():
+            new_demands[change_month] -= row['demand'] * 1.0
+        if toggle_use:
+          total_new_demand = 0.0
+          if change_month == 0:
+            total_new_demand += new_demands[change_month]
+            row_data[2] = str(int(new_demands[change_month]))
+          else:
+            total_new_demand += float(row_data[2])
+          for j in range(0, len(monthly_values)-3):
+            if j+1 == change_month:
+              total_new_demand += new_demands[change_month]
+              row_data.append(str(int(new_demands[change_month])))
             else:
-              change[change_month] = max(row['demand'], change[change_month])
-          for xx in range(0, 12):
-            change[12] += change[xx]
-          row_data[2] = str(int(float(row_data[2]) - float(change[0])))           
-          for j in range(0, len(monthly_values)-2):
-            row_data.append(str(int(float(monthly_values[j+1]) - float(change[j+1]))))
-            print(monthly_values)
-            print(row_data)
-        else:   
-          row_data.extend(first_data)
+              total_new_demand += float(monthly_values[j+1])
+              row_data.append(str(int(float(monthly_values[j+1]))))   
+          row_data.append(str(int(total_new_demand)))
+        else:
           for j in range(len(monthly_values)-2):
-            row_data.append(str(int(float(monthly_values[j+1]))))
+            row_data.append(str(int(float(monthly_values[j+1]))))    
       elif use_line:
-        row_data.extend(first_data)        
+        row_data.extend(first_data)
         for j in range(len(monthly_values)-2):
           row_data.append(str(int(float(monthly_values[j+1]))))
       else:
-        row_data.extend(first_data)        
+        row_data.extend(first_data)
         for j in range(len(monthly_values)-2):
           row_data.append(str(monthly_values[j+1]))
       
@@ -418,7 +429,6 @@ def read_structure_deliveries(delivery_data, initial_year, end_year, read_from_f
       counterii += 1
       if counterii == 50000:
         counteri += 1
-        print(counteri)
         counterii = 0
       data = line.split()
       if data:
@@ -655,7 +665,7 @@ def read_simulated_control_release(delivery_data, reservoir_data, structure_list
 
   return simulated_releases
 
-def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, comp_year, comp_month, storage_id, diversion_id):
+def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, diversion_current_demand, comp_year, comp_month, storage_id, diversion_id):
   month_name_dict = {}
   counter = 10
   for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
@@ -693,8 +703,6 @@ def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, 
                   if use_line:
                     if structure_name == storage_id:
                       monthly_values_adaptive = reservoir_data_adaptive[i].split('.')
-                      print(monthly_values, end = " ")
-                      print(monthly_values_adaptive)
                       storage_change = min(float(monthly_values[15]) - float(monthly_values_adaptive[15]), 0.0)
                       break
                       
@@ -702,8 +710,15 @@ def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, 
   change_points_df['structure'] = [diversion_id,]
   change_points_df['demand'] = [storage_change,]
   change_points_df['date'] = [datetime(comp_year, comp_month, 1, 0, 0),]
+  
+  change_points_buyout_df = pd.DataFrame()
+  change_points_buyout_df['structure'] = [diversion_id,]
+  change_points_buyout_df['demand'] = [diversion_current_demand,]
+  change_points_buyout_df['demand_purchase'] = [0.0,]
+  change_points_buyout_df['date'] = [datetime(comp_year, comp_month, 1, 0, 0),]
 
-  return change_points_df
+
+  return change_points_df, change_points_buyout_df
 
 def read_simulated_reservoirs(reservoir_data, reservoir_list, initial_year, end_year, year_read = 'all'):
   datetime_index = []

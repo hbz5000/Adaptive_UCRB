@@ -52,6 +52,9 @@ year_start = 1908
 year_start_adaptive = 1950
 year_end = 2013
 
+reservoir_transfer_to = '5104055'
+tunnel_transfer_to = '5104634'
+
 ##Initialize basin reservoirs
 ##there are other reservoirs in StateMod - these are just the 
 ##places where we want to look at water supply metrics
@@ -81,7 +84,7 @@ delivery_data = crss.read_text_file(input_data_dictionary['deliveries'])
 
 #create baseline timeseries for reservoir storage - compare to historical observations
 print('create historical reservoir timeseries')
-for res in ['5104055',]:
+for res in [reservoir_transfer_to,]:
   #historical
   ucrb.structures_objects[res].historical_reservoir_timeseries = crss.read_historical_reservoirs(historical_reservoir_data, res, year_start, year_end)
   #baseline statemod
@@ -108,6 +111,8 @@ print('apply deliveries to structures')
 #read delivery data and apply to structures
 structure_deliveries = crss.read_structure_deliveries(delivery_data, year_start, year_end, read_from_file = False)
 ucrb.set_structure_deliveries(structure_deliveries)
+
+monthly_maximums = ucrb.adjust_structure_deliveries()
 baseline_release_timeseries = crss.read_simulated_control_release(delivery_data, reservoir_storage_data_b, ucrb.reservoir_list, year_start, year_end)
 adaptive_release_timeseries = baseline_release_timeseries.copy(deep = True)
 adaptive_release_timeseries.index = pd.to_datetime(adaptive_release_timeseries.index)
@@ -119,7 +124,6 @@ structures_ucrb = gpd.read_file(input_data_dictionary['structures'])
 irrigation_ucrb = gpd.read_file(input_data_dictionary['irrigation'])
 ditches_ucrb = gpd.read_file(input_data_dictionary['ditches'])
 irrigation_ucrb = irrigation_ucrb.to_crs(epsg = 3857)
-
 agg_diversions = pd.read_csv(input_data_dictionary['aggregated_diversions'])
 aggregated_diversions = {}
 for index, row in agg_diversions.iterrows():
@@ -140,13 +144,14 @@ res_thres['3604512'] = 250.0
 res_thres['3704516'] = 50.0
 res_thres['5003668'] = 50.0
 res_thres['5103709'] = 120.0
-res_thres['5104055'] = 600.0
+res_thres['5104055'] = 550.0
 all_change1 = pd.DataFrame()
 all_change2 = pd.DataFrame()
 all_change3 = pd.DataFrame()
+all_change4 = pd.DataFrame()
 print('availability')
-crss.initializeDDM(demand_data, 'cm2015A.ddm')
-for res in ['5104055',]:
+#crss.initializeDDM(demand_data, 'cm2015A.ddm')
+for res in [reservoir_transfer_to,]:
   adaptive_toggle = 0
   for year_num in range(year_start_adaptive, year_end):
     year_add = 0
@@ -161,7 +166,7 @@ for res in ['5104055',]:
 
         structure_deliveries = crss.update_structure_deliveries(delivery_data, datetime_val.year, datetime_val.month, read_from_file = False)
         structure_demands = crss.update_structure_demands(demand_data, datetime_val.year, datetime_val.month, read_from_file = False)
-        ucrb.update_structure_demand_delivery(structure_deliveries, structure_demands, datetime_val)
+        ucrb.update_structure_demand_delivery(structure_deliveries, structure_demands, monthly_maximums, datetime_val)
 
         new_releases = crss.read_simulated_control_release_single(delivery_data, reservoir_storage_data_a, res, datetime_val.year, datetime_val.month)
         for release_type in new_releases:
@@ -171,25 +176,35 @@ for res in ['5104055',]:
       ytd_diversions += this_month_diversions
       print(datetime_val, end = " ")
       print(total_water)
-      if total_water < res_thres[res]:
+      if total_water < res_thres[res] and datetime_val.month >= 4 and datetime_val.month < 9:
+        print(ucrb.structures_objects[tunnel_transfer_to].historical_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].adaptive_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].historical_monthly_demand.loc[datetime_val, 'demand'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].adaptive_monthly_demand.loc[datetime_val, 'demand'])
       
         current_control_location = adaptive_release_timeseries.loc[datetime_val, res + '_location']
         current_physical_supply = adaptive_release_timeseries.loc[datetime_val, res + '_physical_supply']
-        change_points1, last_right, last_structure = ucrb.find_adaptive_purchases(downstream_data, res, datetime_val, current_control_location, current_physical_supply)
-        change_points2 = ucrb.find_buyout_partners(last_right, last_structure, res, datetime_val)
-        all_change1 = pd.concat([all_change1, change_points1])
-        all_change2 = pd.concat([all_change2, change_points2])
-        change_points = pd.concat([change_points1, change_points2])
-        crss.writenewDDM(demand_data, change_points,  year_num + 1, month_num)
+        change_points_purchase_1, change_points_buyout_1, last_right, last_structure = ucrb.find_adaptive_purchases(downstream_data, res, datetime_val, current_control_location, current_physical_supply)
+        change_points_buyout_2 = ucrb.find_buyout_partners(last_right, last_structure, res, datetime_val)
+        all_change1 = pd.concat([all_change1, change_points_purchase_1])
+        all_change2 = pd.concat([all_change2, change_points_buyout_1])
+        all_change3 = pd.concat([all_change3, change_points_buyout_2])
+        change_points_buyout = pd.concat([change_points_buyout_1, change_points_buyout_2])
+
+        crss.writenewDDM(demand_data, change_points_purchase_1, change_points_buyout, year_num + 1, month_num)
         os.system("StateMod_Model_15.exe cm2015A -simulate")        
 
         reservoir_storage_data_a = crss.read_text_file(input_data_dictionary['reservoir_storage_new'])
         
-        change_points3 = crss.compare_storage_scenarios(reservoir_storage_data_b, reservoir_storage_data_a, datetime_val.year, datetime_val.month, res, '5104634')
-        all_change3 = pd.concat([all_change3, change_points3])
-        change_points = pd.concat([change_points, change_points3])
-        print(change_points)        
-        crss.writenewDDM(demand_data, change_points, year_num + 1, month_num)
+        initial_diversion_demand = ucrb.structures_objects[tunnel_transfer_to].adaptive_monthly_deliveries.loc[datetime_val, 'deliveries'] * 1.0
+        change_points_purchase_2, change_points_buyout_1a = crss.compare_storage_scenarios(reservoir_storage_data_b, reservoir_storage_data_a, initial_diversion_demand, datetime_val.year, datetime_val.month, res, tunnel_transfer_to)
+        change_points_buyout = pd.concat([change_points_buyout, change_points_buyout_1a])
+        change_points_buyout_1 = pd.concat([change_points_buyout_1, change_points_buyout_1a])
+        
+        all_change4 = pd.concat([all_change4, change_points_purchase_2])
+        change_points_purchase = pd.concat([change_points_purchase_1, change_points_purchase_2])
+        
+        crss.writenewDDM(demand_data, change_points_purchase, change_points_buyout, year_num + 1, month_num)
         os.system("StateMod_Model_15.exe cm2015A -simulate")        
         
         demand_data = crss.read_text_file(input_data_dictionary['structure_demand_new'])
@@ -198,15 +213,22 @@ for res in ['5104055',]:
         
         structure_deliveries = crss.update_structure_deliveries(delivery_data, datetime_val.year, datetime_val.month, read_from_file = False)
         structure_demands = crss.update_structure_demands(demand_data, datetime_val.year, datetime_val.month, read_from_file = False)
-        ucrb.update_structure_demand_delivery(structure_deliveries, structure_demands, datetime_val)
-        print(ucrb.structures_objects['5104634'].historical_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
-        print(ucrb.structures_objects['5104634'].adaptive_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
-        print(ucrb.structures_objects['5104634'].historical_monthly_demand.loc[datetime_val, 'demand'], end = " ")
-        print(ucrb.structures_objects['5104634'].adaptive_monthly_demand.loc[datetime_val, 'demand'])
+        ucrb.update_structure_demand_delivery(structure_deliveries, structure_demands, monthly_maximums, datetime_val)
+        print(np.sum(change_points_purchase_1['demand']), end = " ")
+        print(np.sum(change_points_purchase_2['demand']), end = " ")
+        print(np.sum(change_points_buyout_1['demand']), end = " ")
+        print(np.sum(change_points_buyout_2['demand']), end = " ")
+        print(current_control_location, end = " ")
+        print(current_physical_supply, end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].historical_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].adaptive_monthly_deliveries.loc[datetime_val, 'deliveries'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].historical_monthly_demand.loc[datetime_val, 'demand'], end = " ")
+        print(ucrb.structures_objects[tunnel_transfer_to].adaptive_monthly_demand.loc[datetime_val, 'demand'])
         
         
         adaptive_toggle = 1
 
-  all_change1.to_csv('output_files/purchases_' + res + '.csv')
-  all_change2.to_csv('output_files/buyouts_' + res + '.csv')
-  all_change3.to_csv('output_files/diversions_' + res + '.csv')
+        all_change1.to_csv('output_files/purchases_' + res + '.csv')
+        all_change2.to_csv('output_files/buyouts_' + res + '.csv')
+        all_change3.to_csv('output_files/buyouts_2_' + res + '.csv')
+        all_change4.to_csv('output_files/diversions_' + res + '.csv')
