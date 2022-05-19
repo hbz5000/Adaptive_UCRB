@@ -126,11 +126,11 @@ class Mapper():
           values.plot(ax = self.ax[nr][nc], column = key, cmap = my_cmap, edgecolor = 'black', linewidth = 0.25, markersize = markersize, alpha = solid_alpha, vmin = value_lim[0], vmax = value_lim[1])
       elif type == 'polygons':
         if self.type == 'single':
-          values.plot(ax = self.ax, column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = 'none', linewidth = 0.001, zorder = zorder)
+          values.plot(ax = self.ax, column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = outline_color, linewidth = linewidth_size, zorder = zorder)
         elif self.type == '1d':      
-          values.plot(ax = self.ax[nr], column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = 'none', linewidth = 0.001, zorder = zorder)
+          values.plot(ax = self.ax[nr], column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = outline_color, linewidth = linewidth_size, zorder = zorder)
         elif self.type == '2d':      
-          values.plot(ax = self.ax[nr][nc], column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = 'none', linewidth = 0.001, zorder = zorder)
+          values.plot(ax = self.ax[nr][nc], column = key, cmap = my_cmap, vmin = value_lim[0], vmax = value_lim[1], edgecolor = outline_color, linewidth = linewidth_size, zorder = zorder)
     else:
       if type == 'points':
         if self.type == 'single':
@@ -163,7 +163,7 @@ class Mapper():
       my_cmap = ListedColormap(my_cmap)
     else:
       my_cmap = ListedColormap(sns.color_palette(colorscale).as_hex())
-    sm = plt.cm.ScalarMappable(cmap=my_cmap, norm=plt.Normalize(vmin=label_loc[0], vmax=label_loc[2]))
+    sm = plt.cm.ScalarMappable(cmap=my_cmap, norm=plt.Normalize(vmin=label_loc[0], vmax=label_loc[-1]))
     # fake up the array of the scalar mappable. Urgh...
     sm._A = []
     cbar = fig.colorbar(sm, cax=cax)

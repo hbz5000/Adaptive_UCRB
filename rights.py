@@ -61,9 +61,9 @@ class Rights():
     
   def initialize_timeseries(self, timesteps):
     self.historical_monthly_demand = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
-    self.historical_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.historical_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['deliveries',])
     self.adaptive_monthly_demand = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
-    self.adaptive_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['demand',])
+    self.adaptive_monthly_deliveries = pd.DataFrame(np.zeros(len(timesteps)), index = timesteps, columns = ['deliveries',])
     self.distance_from_call = np.zeros(len(timesteps))
     self.monthly_snowpack = np.zeros(len(timesteps))
     self.percent_filled = np.zeros(len(timesteps))

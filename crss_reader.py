@@ -14,7 +14,7 @@ import sys
 import scipy.stats as stats
 from datetime import datetime, timedelta
 
-def create_input_data_dictionary(baseline_scenario, adaptive_scenario):
+def create_input_data_dictionary(baseline_scenario, adaptive_scenario, folder_name = ''):
   input_data_dictionary = {}
   ###geographic layout
   input_data_dictionary['hydrography'] = 'Shapefiles_UCRB/NHDPLUS_H_1401_HU4_GDB.gdb'
@@ -33,6 +33,8 @@ def create_input_data_dictionary(baseline_scenario, adaptive_scenario):
   input_data_dictionary['structure_rights'] = 'input_files/cm2015' + baseline_scenario + '.ddr'
   ##reservoir fill rights data
   input_data_dictionary['reservoir_rights'] = 'input_files/cm2015' + baseline_scenario + '.rer'
+  ##reservoir fill rights data
+  input_data_dictionary['instream_rights'] = 'cm2015.ifr'
   ##full natural flow data
   input_data_dictionary['natural flows'] = 'cm2015x.xbm'
   ##flow/node network
@@ -40,20 +42,28 @@ def create_input_data_dictionary(baseline_scenario, adaptive_scenario):
   ##historical reservoir data
   input_data_dictionary['historical_reservoirs'] = 'input_files/cm2015.eom'
   ##call data
-  input_data_dictionary['calls'] = 'output_files/cm2015' + baseline_scenario + '.xca'
+  input_data_dictionary['calls'] = 'cm2015' + baseline_scenario + '.xca'
 
   ###statemod output data
   ##reservoir storage data
-  input_data_dictionary['reservoir_storage'] = 'output_files/cm2015' + baseline_scenario + '.xre'
+  input_data_dictionary['reservoir_storage'] = 'cm2015' + baseline_scenario + '.xre'
   ##diversion data
-  input_data_dictionary['deliveries'] = 'output_files/cm2015' + baseline_scenario + '.xdd'
-
+  input_data_dictionary['deliveries'] = 'cm2015' + baseline_scenario + '.xdd'
+  ##return flow data
+  input_data_dictionary['return_flows'] = 'cm2015' + baseline_scenario + '.xss'
+  ##plan flow data
+  input_data_dictionary['plan_releases'] = 'cm2015' + baseline_scenario + '.xpl'
+  
   ##adaptive reservoir output data
-  input_data_dictionary['reservoir_storage_new'] = 'cm2015' + adaptive_scenario + '.xre'
+  input_data_dictionary['reservoir_storage_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xre'
   ##adaptive diversion data
-  input_data_dictionary['deliveries_new'] = 'cm2015' + adaptive_scenario + '.xdd'
+  input_data_dictionary['deliveries_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xdd'
   ##adaptive demand data
-  input_data_dictionary['structure_demand_new'] = 'cm2015' + adaptive_scenario + '.ddm'
+  input_data_dictionary['structure_demand_new'] = folder_name + 'cm2015' + adaptive_scenario + '.ddm'
+  ##adaptive return flows
+  input_data_dictionary['return_flows_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xss'
+  ##plan flow data
+  input_data_dictionary['plan_releases'] = folder_name + 'cm2015' + adaptive_scenario + '.xpl'
 
   input_data_dictionary['snow'] = 'Snow_Data/'
   input_data_dictionary['irrigation'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div5_Irrig_2015.shp'
@@ -124,6 +134,24 @@ def read_text_file(filename):
   f.close()
   return all_split_data
 
+def make_control_file(old_filename, scenario_name, year_start, year_end):
+  with open(old_filename + '.ctl','r') as f:
+    all_split_data = [x for x in f.readlines()]       
+  f.close()
+  f = open(old_filename + scenario_name + '.ctl','w')
+  # write firstLine # of rows as in initial file
+  for i in range(0, len(all_split_data)):
+    if i == 7:
+      f.write('    ' + str(year_start) + '     : iystr   STARTING YEAR OF SIMULATION\n')
+    elif i == 8:
+      f.write('    ' + str(year_end) + '     : iyend   ENDING YEAR OF SIMULATION\n')
+    else:
+      f.write(all_split_data[i])
+  f.close()
+
+  return all_split_data
+
+
 def initializeDDM(demand_data, filename):
   f = open('cm2015A.ddm','w')
   # write firstLine # of rows as in initial file
@@ -133,8 +161,109 @@ def initializeDDM(demand_data, filename):
     i += 1
   f.write(demand_data[i])
   i+=1
+def writepartialDDM(demand_data, updated_demands, structures_purchase, structures_buyout, change_month, change_year, begin_year, end_year, scenario_name = 'A', structure_list = 'all'):    
+  new_data = []
+  use_value = 0
+  start_loop = 0
+  ii = 0
+  while updated_demands[ii][0] == '#':
+    ii += 1
+  ii += 1
+  for i in range(0, len(demand_data)):
+    if use_value == 1:
+      start_loop = 1
+    if demand_data[i][0] != '#':
+      use_value = 1
+    if start_loop == 1:
+      monthly_values = demand_data[i].split('.')
+      first_data = monthly_values[0].split()
+      use_line = True
+      row_data = []
+      try:
+        year_num = int(first_data[0])
+        structure_name = str(first_data[1]).strip()
+      except:
+        use_line = False
+      if use_line:
+        if structure_name in structure_list or structure_list == 'all':        
+          if year_num >= begin_year and year_num <= end_year:
+            this_buyout_structure = structures_buyout[structures_buyout['structure'] == structure_name]
+            this_purchase_structure = structures_purchase[structures_purchase['structure'] == structure_name]
+            monthly_values_new = updated_demands[ii].split('.')
+            first_data_new = monthly_values_new[0].split()
+            new_demands = np.zeros(13)
+            row_data.extend(first_data_new)
+            toggle_use = False
+            if year_num == change_year:
+              if len(this_buyout_structure) > 0:
+                toggle_use = True
+                for index, row in this_buyout_structure.iterrows():
+                  new_demands[change_month] = row['demand'] * 1.0
+              if len(this_purchase_structure) > 0:
+                toggle_use = True
+                for index, row in this_purchase_structure.iterrows():
+                  new_demands[change_month] -= row['demand'] * 1.0
+              if toggle_use:
+                total_new_demand = 0.0
+                if change_month == 0:
+                  total_new_demand += new_demands[change_month]
+                  row_data[2] = str(int(new_demands[change_month]))
+                else:
+                  total_new_demand += float(row_data[2])
+                for j in range(0, len(monthly_values_new)-3):
+                  if j+1 == change_month:
+                    total_new_demand += new_demands[change_month]
+                    row_data.append(str(int(new_demands[change_month])))
+                  else:
+                    total_new_demand += float(monthly_values_new[j+1])
+                    row_data.append(str(int(float(monthly_values_new[j+1]))))   
+                row_data.append(str(int(total_new_demand)))
+              else:
+                for j in range(len(monthly_values_new)-2):
+                  row_data.append(str(int(float(monthly_values_new[j+1]))))
+            else:
+              for j in range(len(monthly_values_new)-2):
+                row_data.append(str(int(float(monthly_values_new[j+1]))))            
+          else:
+            row_data.extend(first_data)
+            for j in range(len(monthly_values)-2):
+              row_data.append(str(int(float(monthly_values[j+1]))))
+        else:
+          row_data.extend(first_data)
+          for j in range(len(monthly_values)-2):
+            row_data.append(str(int(float(monthly_values[j+1]))))
 
-def writenewDDM(demand_data, structures_purchase, structures_buyout, change_year, change_month):    
+      else:
+        row_data.extend(first_data)
+        for j in range(len(monthly_values)-2):
+          row_data.append(str(monthly_values[j+1]))
+      ii+=1
+      new_data.append(row_data)
+    # write new data to file
+  f = open('cm2015' + scenario_name + '.ddm','w')
+  # write firstLine # of rows as in initial file
+  j = 0
+  while demand_data[j][0] == '#':
+    f.write(demand_data[j])
+    j += 1
+  f.write(demand_data[j])
+  j+=1
+  for i in range(len(new_data)):
+    # write year, ID and first month of adjusted data
+    f.write(new_data[i][0] + ' ' + new_data[i][1] + (19-len(new_data[i][1])-len(new_data[i][2]))*' ' + new_data[i][2] + '.')
+    # write all but last month of adjusted data
+    for j in range(len(new_data[i])-4):
+      f.write((7-len(new_data[i][j+3]))*' ' + new_data[i][j+3] + '.')                
+        # write last month of adjusted data
+    f.write((9-len(new_data[i][-1]))*' ' + new_data[i][-1] + '.' + '\n')
+  for j in range(j+len(new_data), len(demand_data)):
+    f.write(demand_data[j])
+    
+  f.close()
+    
+  return None
+
+def writenewDDM(demand_data, structures_purchase, structures_buyout, change_year, change_month, scenario_name = 'A'):    
   new_data = []
   use_value = 0
   start_loop = 0
@@ -197,7 +326,7 @@ def writenewDDM(demand_data, structures_purchase, structures_buyout, change_year
       
       new_data.append(row_data)                
     # write new data to file
-  f = open('cm2015A.ddm','w')
+  f = open('cm2015' + scenario_name + '.ddm','w')
   # write firstLine # of rows as in initial file
   i = 0
   while demand_data[i][0] == '#':
@@ -256,12 +385,64 @@ def read_rights_data(all_data_DDR, structure_type = 'structure'):
       all_rights_priority.append(right_priority) 
       all_rights_decree.append(right_decree)
       all_rights_structure_name.append(structure_name)
+      if structure_name == '3900563':
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('3900563_I')
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('3903505_I')
+      if structure_name == '3900663':
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('3903505_I')
+      if structure_name == '7200646':
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('7200813')
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('7200646_I')
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('7200813PP')
+        all_rights_name.append(right_name)
+        all_rights_priority.append(right_priority) 
+        all_rights_decree.append(right_decree)
+        all_rights_structure_name.append('7200813PW')
+        
   if structure_type == 'reservoir':
     return all_rights_name, all_rights_structure_name, all_rights_priority, all_rights_decree, all_rights_fill_type
   else:
     return all_rights_name, all_rights_structure_name, all_rights_priority, all_rights_decree
 
-
+def find_historical_max_deliveries(structure_deliveries, structure_id):
+  month_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+  annual_deliveries = []
+  total_annual_deliveries = 0.0
+  monthly_deliveries = {}
+  for x in month_list:
+    monthly_deliveries[x] = []
+    
+  for index, row in structure_deliveries.iterrows():
+    if index.month == 10 and total_annual_deliveries > 0.0:
+      annual_deliveries.append(total_annual_deliveries)
+      total_annual_deliveries = 0.0
+    monthly_deliveries[month_list[index.month - 1]].append(row[structure_id])
+    total_annual_deliveries += row[structure_id]
+      
+  max_annual = np.max(annual_deliveries)
+  max_monthly = np.zeros(12)
+  for x_cnt, x in enumerate(month_list):
+    max_monthly[x_cnt] = np.max(monthly_deliveries[x])
+    
+  return max_monthly, max_annual
 
 def read_historical_reservoirs(historical_reservoir_data, reservoir_list, initial_year, end_year, year_read = 'all'):
   datetime_index = []
@@ -396,8 +577,64 @@ def read_structure_demands(demand_data, initial_year, end_year, read_from_file =
   
   return structure_demand  
   
+def read_structure_return_flows(return_flow_data, initial_year, end_year, read_from_file = False):
+  if read_from_file:
+    structure_return_flows = pd.read_csv('input_files/returns_by_structure.csv', index_col = 0)
+    structure_return_flows.index = pd.to_datetime(structure_return_flows.index)
 
-def read_structure_deliveries(delivery_data, initial_year, end_year, read_from_file = False):
+  else:
+    counter = 10
+    month_num_dict = {}
+    month_name_list = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
+    structure_return_flows = pd.DataFrame(index = month_name_list)
+    structure_diversions = pd.DataFrame(index = month_name_list)
+    structure_returns = pd.DataFrame(index = month_name_list)
+  
+    counterii = 0
+    counteri = 0
+    for line in return_flow_data:
+      counterii += 1
+      if counterii == 50000:
+        counteri += 1
+        counterii = 0
+      data = line.split()
+      if data:
+        if len(data) > 1 and data[0] !='#':
+          struct_id = str(data[0].strip())
+          try:
+            month_id = data[2].strip()
+            year_id = int(data[1].strip())
+            if month_id in month_name_list:
+              use_line = True
+            else:
+              use_line = False
+          except:
+            use_line = False            
+          if use_line:
+            if struct_id in structure_diversions.columns:           
+              structure_diversions.loc[month_id, struct_id] += float(data[12].strip())
+            else:
+              structure_diversions[struct_id] = np.zeros(len(month_name_list))
+              structure_diversions.loc[month_id, struct_id] += float(data[12].strip())
+
+            if struct_id in structure_returns.columns:           
+              structure_returns.loc[month_id, struct_id] += float(data[17].strip())
+            else:
+              structure_returns[struct_id] = np.zeros(len(month_name_list))
+              structure_returns.loc[month_id, struct_id] += float(data[17].strip())
+    
+    for struct_id in structure_diversions.columns:
+      structure_return_flows[struct_id] = np.zeros(len(month_name_list))
+      for month_id in month_name_list:
+        if structure_diversions.loc[month_id, struct_id] > 0.0:
+          structure_return_flows.loc[month_id, struct_id] = structure_returns.loc[month_id, struct_id] / structure_diversions.loc[month_id, struct_id]
+              
+    structure_return_flows.to_csv('input_files/returns_by_structure.csv')
+  
+  return structure_return_flows  
+  
+
+def read_structure_deliveries(delivery_data, initial_year, end_year, use_list = 'all', read_from_file = False):
   if read_from_file:
     structure_deliveries = pd.read_csv('input_files/deliveries_by_structure.csv', index_col = 0)
     structure_deliveries.index = pd.to_datetime(structure_deliveries.index)
@@ -434,22 +671,124 @@ def read_structure_deliveries(delivery_data, initial_year, end_year, read_from_f
       if data:
         if len(data) > 1 and data[0] !='#':
           struct_id = str(data[0].strip())
-          if struct_id == 'Baseflow' or struct_id == 'NA':
-            struct_id = str(data[1].strip())
-          try:
-            month_id = data[3].strip()
-            year_id = int(data[2].strip())
-            month_number = month_num_dict[month_id]
-            use_line = True
-          except:
-            use_line = False            
-          if use_line:             
-            datetime_val = datetime(year_id, month_number, 1, 0, 0)            
-            structure_deliveries.loc[datetime_val, struct_id] = float(data[16].strip()) - float(data[15].strip())
-              
-    structure_deliveries.to_csv('input_files/deliveries_by_structure.csv')
+          if use_list == 'all' or struct_id in use_list:
+            if struct_id == 'Baseflow' or struct_id == 'NA':
+              struct_id = str(data[1].strip())
+            try:
+              month_id = data[3].strip()
+              year_id = int(data[2].strip())
+              month_number = month_num_dict[month_id]
+              use_line = True
+            except:
+              use_line = False            
+            if use_line:             
+              datetime_val = datetime(year_id, month_number, 1, 0, 0)            
+              structure_deliveries.loc[datetime_val, struct_id] = float(data[16].strip()) - float(data[15].strip())
+    if use_list == 'all':            
+      structure_deliveries.to_csv('input_files/deliveries_by_structure.csv')
   
   return structure_deliveries  
+
+
+
+def read_plan_flows(plan_data, initial_year, end_year, read_from_file = False):
+
+  if read_from_file:
+    plan_deliveries = pd.read_csv('input_files/plan_deliveries_by_structure.csv', index_col = 0)
+    plan_deliveries.index = pd.to_datetime(plan_deliveries.index)
+
+  else:
+    counter = 10
+    month_num_dict = {}
+    for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+      month_num_dict[month_name] = counter
+      counter += 1
+      if counter == 13:
+        counter = 1
+
+    datetime_index = []
+    for year_count in range(initial_year, end_year):
+      month_num = 10
+      year_add = 0
+      for month_count in range(0, 12):
+        datetime_index.append(datetime(year_count + year_add, month_num, 1, 0, 0))
+        month_num += 1
+        if month_num == 13:
+          month_num = 1
+          year_add = 1
+    plan_deliveries = pd.DataFrame(index = datetime_index)
+  
+    plan_toggle = 0
+    for line in plan_data:
+      if plan_toggle == 0:
+        data = line.split()
+        if data:
+          if data[0] == 'River' and data[1] == 'Location':
+            oop_source = data[3]
+            plan_toggle = 1
+            oop_destination_list = []
+      elif plan_toggle == 1:
+        data = line.split()
+        if data:
+          if len(data) > 10:
+            if data[0] == 'ID':
+              for x in oop_destination_list:
+                plan_deliveries[x + '_diversion'] = np.zeros(len(datetime_index))
+              plan_deliveries[oop_source + '_release'] = np.zeros(len(datetime_index))
+              plan_toggle = 2
+            else:
+              for x in range(0, len(data)):
+                if data[x] == 'Destination':
+                  oop_destination_list.append(data[x + 2])
+      elif plan_toggle == 2:
+        data = line.split()
+        extract_data = False
+        if data:
+          if len(data) > 1:
+            if data[0] == 'Plan' and data[1] == 'Summary':
+              plan_toggle = 0
+            else:
+              extract_data = True
+          else:
+            extract_data = True
+        else:
+          extract_data = True
+        if extract_data:
+          monthly_values = line.split('.')
+          if len(monthly_values) > 0:
+            first_data = monthly_values[0].split()
+            use_line = True
+            if len(monthly_values) > 1 and first_data[0] !='#':
+              try:
+                month_id = first_data[3].strip()
+                year_id = int(first_data[2].strip())
+                month_number = month_num_dict[month_id]
+              except:
+                use_line = False
+              if use_line:
+                struct_id = first_data[0].strip()
+                datetime_val = datetime(year_id, month_number, 1, 0, 0)
+                counter = 0
+                total_div = 0.0
+                for oop_dest in oop_destination_list:
+                  if oop_dest == 'Various' or oop_dest == '0':
+                    skip_this = 1
+                  else:
+                    if len(monthly_values) == 25:
+                      plan_deliveries.loc[datetime_val, oop_dest + '_diversion'] += float(monthly_values[counter + 2])
+                      total_div += float(monthly_values[counter + 2])
+                    elif len(monthly_values) == 23:
+                      plan_deliveries.loc[datetime_val, oop_dest + '_diversion'] += float(monthly_values[counter+1])
+                      total_div += float(monthly_values[counter+1])
+                    counter += 1
+                    if counter == 20:
+                      break
+                plan_deliveries.loc[datetime_val, oop_source + '_release'] += total_div
+                            
+    plan_deliveries.to_csv('input_files/plan_deliveries_by_structure.csv')
+      
+  return plan_deliveries  
+  
 
 def update_structure_demands(demand_data, update_year, update_month, read_from_file = False):
 
@@ -473,6 +812,38 @@ def update_structure_demands(demand_data, update_year, update_month, read_from_f
           structure_demand[structure_name] = float(monthly_values[update_month + 2])
   
   return structure_demand  
+  
+def update_structure_outflows(delivery_data, update_year, update_month, read_from_file = False):
+  counter = 10
+  month_num_dict = {}
+  for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+    month_num_dict[month_name] = counter
+    counter += 1
+    if counter == 13:
+      counter = 1
+
+  structure_outflows = {}
+  for i in range(len(delivery_data)):
+    use_line = True
+    monthly_values = delivery_data[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 3:
+      use_line = True
+      try:
+        month_id = first_data[3].strip()
+        year_number = int(first_data[2].strip())
+        month_number = month_num_dict[month_id]
+      except:
+        use_line = False
+      if use_line:
+        if year_number == update_year and month_number == update_month:
+          struct_id = str(first_data[0].strip())
+          if struct_id == 'Baseflow' or struct_id == 'NA':
+            struct_id = str(first_data[1].strip())
+
+          structure_outflows[struct_id] = float(monthly_values[30].strip())
+                    
+  return structure_outflows  
 
 def update_structure_deliveries(delivery_data, update_year, update_month, read_from_file = False):
 
@@ -505,7 +876,36 @@ def update_structure_deliveries(delivery_data, update_year, update_month, read_f
             structure_deliveries[struct_id] = float(data[16].strip()) - float(data[15].strip())
                     
   return structure_deliveries  
-
+  
+def update_plan_flows(reservoir_storage_data_b, reservoir_list, update_year, update_month):
+        
+  month_name_dict = {}
+  counter = 10
+  for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+    month_name_dict[month_name] = counter
+    counter += 1
+    if counter == 13:
+      counter = 1
+      
+  new_plan_flows = {}
+  for i in range(len(reservoir_storage_data_b)):
+    use_line = True
+    monthly_values = reservoir_storage_data_b[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 1:
+      structure_name = str(first_data[0])
+      if structure_name in reservoir_list:
+        try:
+          account_num = int(first_data[1])
+          year_num = int(first_data[2])
+          month_num = month_name_dict[str(first_data[3])]
+        except:
+          use_line = False
+        if use_line and account_num == 0 and year_num == update_year and month_num == update_month:
+          datetime_val = datetime(year_num, month_num, 1, 0, 0)
+          new_plan_flows[structure_name] = float(monthly_values[19])
+  
+  return new_plan_flows
 
 def read_simulated_diversions(delivery_data, structure_list, initial_year, end_year):
   counter = 10
@@ -548,7 +948,7 @@ def read_simulated_diversions(delivery_data, structure_list, initial_year, end_y
 
   return simulated_diversions
   
-def read_simulated_control_release_single(delivery_data, reservoir_data, structure_name, update_year, update_month):
+def read_simulated_control_release_single(delivery_data, reservoir_data, update_year, update_month, use_list = 'all'):
 
   counter = 10
   month_num_dict = {}
@@ -560,44 +960,52 @@ def read_simulated_control_release_single(delivery_data, reservoir_data, structu
 
   simulated_releases = {}
   for line in reservoir_data:
-    data = line.split()
-    if data:
-      if len(data) > 1 and data[0] !='#':
+    monthly_values = line.split('.')
+    if len(monthly_values) > 0:
+      first_data = monthly_values[0].split()
+      if len(first_data) > 1:
+        struct_id = str(first_data[1].strip())
+        if use_list == 'all' or struct_id in use_list:
+          use_line = True
+          if len(monthly_values) > 1 and first_data[0] !='#':
+            try:
+              month_id = first_data[3].strip()
+              year_id = int(first_data[2].strip())
+              month_number = month_num_dict[month_id]
+            except:
+              use_line = False
+            if use_line:
+              if month_number == update_month and year_id == update_year:
+                struct_id = first_data[0].strip()
+                if str(first_data[1].strip()) == '0':
+                  simulated_releases[struct_id + '_flow'] = float(monthly_values[18].strip())
+                  simulated_releases[struct_id + '_diverted'] = float(monthly_values[20].strip()) + float(monthly_values[5].strip()) + float(monthly_values[6].strip())
+            
+            
+  for line in delivery_data:
+    monthly_values = line.split('.')
+    if len(monthly_values) > 0:
+      first_data = monthly_values[0].split()
+      use_line = True
+      if len(monthly_values) > 1 and first_data[0] !='#':
         try:
-          month_id = data[3].strip()
-          year_id = int(data[2].strip())
+          month_id = first_data[3].strip()
+          year_id = int(first_data[2].strip())
           month_number = month_num_dict[month_id]
         except:
           use_line = False
         if use_line:
           if month_number == update_month and year_id == update_year:
-            struct_id = data[0].strip()
-            if struct_id == structure_name and data[1].strip() == '0':
-              simulated_releases[structure_name + '_flow'] = float(data[22].strip())
-              simulated_releases[structure_name + '_diverted'] = float(data[24].strip()) + float(data[10].strip()) + float(data[9].strip())
-            
-            
-  for line in delivery_data:
-    data = line.split()
-    if data:
-      if len(data) > 1 and data[0] !='#':
-        try:
-          month_id = data[3].strip()
-          year_id = int(data[2].strip())
-          month_number = month_num_dict[month_id]
-        except:
-          use_line = False            
-        if use_line:
-          if month_number == update_month and year_id == update_year:
-            struct_id = str(data[1].strip())
-            if struct_id in structure_name:
-              simulated_releases[structure_name + '_location'] = data[33].strip()
-              simulated_releases[structure_name + '_available'] = float(data[32].strip())
-              simulated_releases[structure_name + '_physical_supply'] = float(data[28].strip()) - float(data[32].strip()) - max(float(data[29].strip()), 0.0)
+            struct_id = str(first_data[1].strip())
+            last_values = monthly_values[29].split()
+            simulated_releases[struct_id + '_location'] = str(last_values[0].strip())
+            simulated_releases[struct_id + '_available'] = float(monthly_values[28].strip())
+            simulated_releases[struct_id + '_physical_supply'] = float(monthly_values[24].strip()) - float(monthly_values[28].strip()) - max(float(monthly_values[25].strip()), 0.0)
+            simulated_releases[struct_id + '_outflow'] = float(monthly_values[27].strip())
 
   return simulated_releases
 
-def read_simulated_control_release(delivery_data, reservoir_data, structure_list, initial_year, end_year):
+def read_simulated_control_release(delivery_data, reservoir_data, initial_year, end_year, use_list = 'all'):
   counter = 10
   month_num_dict = {}
   for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
@@ -617,55 +1025,55 @@ def read_simulated_control_release(delivery_data, reservoir_data, structure_list
         month_num = 1
         year_add = 1
   
-  release_list = []
-  for struct in structure_list:
-    for x in ['_flow', '_diverted', '_available', '_location', '_physical_supply']:
-      release_list.append(struct + x)
-  simulated_releases = pd.DataFrame(index = datetime_index, columns = release_list)
-  for struct in structure_list:
-    for x in ['_flow', '_diverted', '_available', '_physical_supply']:
-      simulated_releases[struct + x] = np.zeros(len(datetime_index))
+  simulated_releases = pd.DataFrame(index = datetime_index)
   for line in reservoir_data:
-    data = line.split()
-    if data:
-      if len(data) > 1 and data[0] !='#':
-        struct_id = data[0].strip()
-        if struct_id in structure_list and data[1].strip() == '0':
-          use_line = True
+    monthly_values = line.split('.')
+    if len(monthly_values) > 0:
+      first_data = monthly_values[0].split()
+      if len(monthly_values) > 1 and first_data[0] !='#':
+        use_line = True
+        struct_id = first_data[0].strip()
+        if use_list == 'all' or struct_id in use_list:
           try:
-            month_id = data[3].strip()
-            year_id = int(data[2].strip())
+            month_id = first_data[3].strip()
+            year_id = int(first_data[2].strip())
             month_number = month_num_dict[month_id]
           except:
-            use_line = False
+            use_line = False            
           if use_line:
-            datetime_val = datetime(year_id, month_number, 1, 0, 0)       
-            simulated_releases.loc[datetime_val, struct_id + '_flow'] = float(data[22].strip())
-            simulated_releases.loc[datetime_val, struct_id + '_diverted'] = float(data[24].strip()) + float(data[10].strip()) + float(data[9].strip())
+            if str(first_data[1].strip()) == '0':
+              datetime_val = datetime(year_id, month_number, 1, 0, 0)       
+              simulated_releases.loc[datetime_val, struct_id + '_flow'] = float(monthly_values[18].strip())
+              simulated_releases.loc[datetime_val, struct_id + '_diverted'] = float(monthly_values[20].strip()) + float(monthly_values[5].strip()) + float(monthly_values[6].strip())
             
             
   for line in delivery_data:
-    data = line.split()
-    if data:
-      if len(data) > 1 and data[0] !='#':
-        struct_id = str(data[1].strip())
-        if struct_id in structure_list:
-          use_line = True
+    monthly_values = line.split('.')
+    if len(monthly_values) > 0:
+      first_data = monthly_values[0].split()
+      if len(monthly_values) > 1 and first_data[0] !='#':
+        use_line = True
+        struct_id = first_data[0].strip()
+        if struct_id == 'Baseflow' or struct_id == 'NA':
+          struct_id = first_data[1].strip()
+        if use_list == 'all' or struct_id in use_list:
           try:
-            month_id = data[3].strip()
-            year_id = int(data[2].strip())
+            month_id = first_data[3].strip()
+            year_id = int(first_data[2].strip())
             month_number = month_num_dict[month_id]
           except:
             use_line = False            
           if use_line:             
-            datetime_val = datetime(year_id, month_number, 1, 0, 0)            
-            simulated_releases.loc[datetime_val, struct_id + '_location'] = data[33].strip()
-            simulated_releases.loc[datetime_val, struct_id + '_available'] = float(data[32].strip())
-            simulated_releases.loc[datetime_val, struct_id + '_physical_supply'] = float(data[28].strip()) - float(data[32].strip()) - max(float(data[29].strip()), 0.0)
-
+            datetime_val = datetime(year_id, month_number, 1, 0, 0)
+            last_values = monthly_values[29].split()
+            simulated_releases.loc[datetime_val, struct_id + '_location'] = str(last_values[0].strip())
+            simulated_releases.loc[datetime_val, struct_id + '_available'] = float(monthly_values[28].strip())
+            simulated_releases.loc[datetime_val, struct_id + '_physical_supply'] = float(monthly_values[24].strip()) - float(monthly_values[28].strip()) - max(float(monthly_values[25].strip()), 0.0)
+            simulated_releases.loc[datetime_val, struct_id + '_outflow'] = float(monthly_values[27].strip())
+            
   return simulated_releases
 
-def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, diversion_current_demand, comp_year, comp_month, storage_id, diversion_id):
+def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, diversion_current_demand, comp_year, comp_month, storage_id, diversion_id, storage_right):
   month_name_dict = {}
   counter = 10
   for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
@@ -702,13 +1110,48 @@ def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, 
                     use_line = False
                   if use_line:
                     if structure_name == storage_id:
-                      monthly_values_adaptive = reservoir_data_adaptive[i].split('.')
-                      storage_change = min(float(monthly_values[15]) - float(monthly_values_adaptive[15]), 0.0)
+                      initial_value = float(monthly_values[15]) 
                       break
                       
+  for i in range(len(reservoir_data_adaptive)):
+    use_line = True
+    monthly_values = reservoir_data_adaptive[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 3:
+      try:
+        year_num = int(first_data[2])
+      except:
+        use_line = False
+      if use_line:
+        if year_num == comp_year:
+          try:
+            month_num = month_name_dict[str(first_data[3])]
+          except:
+            use_line = False
+          if use_line:
+            if month_num == comp_month:
+              try:
+                account_num = int(first_data[1])
+              except:
+                use_line = False
+              if use_line:              
+                if account_num == 0:
+                  try:
+                    structure_name = str(first_data[0])
+                  except:
+                    use_line = False
+                  if use_line:
+                    if structure_name == storage_id:
+                      adaptive_value = float(monthly_values[15]) 
+                      break
+                      
+  storage_change = min(initial_value - adaptive_value, 0.0)
+    
   change_points_df = pd.DataFrame()    
   change_points_df['structure'] = [diversion_id,]
   change_points_df['demand'] = [storage_change,]
+  change_points_df['right'] = [storage_right,]
+  change_points_df['consumptive'] = [1.0,]
   change_points_df['date'] = [datetime(comp_year, comp_month, 1, 0, 0),]
   
   change_points_buyout_df = pd.DataFrame()
@@ -718,7 +1161,138 @@ def compare_storage_scenarios(reservoir_data_baseline, reservoir_data_adaptive, 
   change_points_buyout_df['date'] = [datetime(comp_year, comp_month, 1, 0, 0),]
 
 
-  return change_points_df, change_points_buyout_df
+  return change_points_df, change_points_buyout_df, adaptive_value
+
+
+def compare_res_diversion_scenarios(reservoir_data_baseline, reservoir_data_adaptive, start_year, end_year, storage_id):
+
+  datetime_index = []
+  for year_count in range(start_year - 1, end_year + 1):
+    month_num = 10
+    year_add = 0
+    for month_count in range(0, 12):
+      datetime_index.append(datetime(year_count + year_add, month_num, 1, 0, 0))
+      month_num += 1
+      if month_num == 13:
+        month_num = 1
+        year_add = 1
+  
+  reservoir_diversions = pd.DataFrame(index = datetime_index, columns = [storage_id + '_res_diversion',])
+  reservoir_diversions[storage_id + '_res_diversion'] = np.zeros(len(datetime_index))
+  month_name_dict = {}
+  counter = 10
+  for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+    month_name_dict[month_name] = counter
+    counter += 1
+    if counter == 13:
+      counter = 1
+  for i in range(len(reservoir_data_baseline)):
+    use_line = True
+    monthly_values = reservoir_data_baseline[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 3:
+      try:
+        year_num = int(first_data[2])
+      except:
+        use_line = False
+      if use_line:
+        if year_num >= start_year and year_num <= end_year:
+          try:
+            month_num = month_name_dict[str(first_data[3])]
+          except:
+            use_line = False
+          if use_line:
+            try:
+              account_num = int(first_data[1])
+            except:
+              use_line = False
+            if use_line:              
+              if account_num == 0:
+                try:
+                  structure_name = str(first_data[0])
+                except:
+                  use_line = False
+                if use_line:
+                  if structure_name == storage_id:
+                    datetime_val = datetime(year_num, month_num, 1, 0, 0)
+                    reservoir_diversions.loc[datetime_val, storage_id + '_res_diversion'] -= (float(monthly_values[20]) - float(monthly_values[19]))
+                      
+  for i in range(len(reservoir_data_adaptive)):
+    use_line = True
+    monthly_values = reservoir_data_adaptive[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 3:
+      try:
+        year_num = int(first_data[2])
+      except:
+        use_line = False
+      if use_line:
+        if year_num >= start_year and year_num <= end_year:
+          try:
+            month_num = month_name_dict[str(first_data[3])]
+          except:
+            use_line = False
+          if use_line:
+            try:
+              account_num = int(first_data[1])
+            except:
+              use_line = False
+            if use_line:              
+              if account_num == 0:
+                try:
+                  structure_name = str(first_data[0])
+                except:
+                  use_line = False
+                if use_line:
+                  if structure_name == storage_id:
+                    datetime_val = datetime(year_num, month_num, 1, 0, 0)
+                    reservoir_diversions.loc[datetime_val, storage_id + '_res_diversion'] += (float(monthly_values[20]) - float(monthly_values[19]))
+                    reservoir_diversions.loc[datetime_val, storage_id + '_res_diversion'] = max(reservoir_diversions.loc[datetime_val, storage_id + '_res_diversion'], 0.0)
+
+  return reservoir_diversions
+
+def read_plan_flows_2(reservoir_data, reservoir_list, initial_year, end_year):
+  datetime_index = []
+  for year_count in range(initial_year, end_year):
+    month_num = 10
+    year_add = 0
+    for month_count in range(0, 12):
+      datetime_index.append(datetime(year_count + year_add, month_num, 1, 0, 0))
+      month_num += 1
+      if month_num == 13:
+        month_num = 1
+        year_add = 1
+        
+  month_name_dict = {}
+  counter = 10
+  for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+    month_name_dict[month_name] = counter
+    counter += 1
+    if counter == 13:
+      counter = 1
+      
+  simulated_storage = pd.DataFrame(index = datetime_index, columns = reservoir_list)
+  for res in reservoir_list:
+    simulated_storage[res] = np.zeros(len(datetime_index))
+  for i in range(len(reservoir_data)):
+    use_line = True
+    monthly_values = reservoir_data[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 1:
+      structure_name = str(first_data[0])
+      if structure_name in reservoir_list:
+        try:
+          account_num = int(first_data[1])
+          year_num = int(first_data[2])
+          month_num = month_name_dict[str(first_data[3])]
+        except:
+          use_line = False
+        if use_line and account_num == 0:
+          datetime_val = datetime(year_num, month_num, 1, 0, 0)
+          simulated_storage.loc[datetime_val, structure_name] = float(monthly_values[19])
+
+  return simulated_storage  
+
 
 def read_simulated_reservoirs(reservoir_data, reservoir_list, initial_year, end_year, year_read = 'all'):
   datetime_index = []
@@ -765,6 +1339,42 @@ def read_simulated_reservoirs(reservoir_data, reservoir_list, initial_year, end_
           simulated_storage.loc[datetime_val, structure_name + '_diversions_' + str(account_num)] = float(monthly_values[8])
 
   return simulated_storage  
+
+def update_simulated_reservoirs(reservoir_data, update_year, update_month, use_list = 'all', year_read = 'all'):
+      
+  simulated_storage = {}
+  
+  month_name_dict = {}
+  counter = 10
+  for month_name in ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']:
+    month_name_dict[month_name] = counter
+    counter += 1
+    if counter == 13:
+      counter = 1
+
+  for i in range(len(reservoir_data)):
+    use_line = True
+    monthly_values = reservoir_data[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 1:
+      structure_name = str(first_data[0])
+      if use_list == 'all' or structure_name in use_list:
+        try:
+          account_num = int(first_data[1])
+          year_num = int(first_data[2])
+          month_num = month_name_dict[str(first_data[3])]
+        except:
+          use_line = False
+        if use_line and account_num == 0:
+          if update_year == year_num and update_month == month_num:
+            simulated_storage[structure_name] = float(first_data[4])
+            simulated_storage[structure_name + '_diversions'] = float(monthly_values[8])
+          else:
+            simulated_storage[structure_name + '_account_' + str(account_num)] = float(first_data[4])
+            simulated_storage[structure_name + '_diversions_' + str(account_num)] = float(monthly_values[8])
+
+  return simulated_storage  
+
 
 def read_rights(downstream_data, column_lengths, station_name):
   split_line = ['']*len(column_lengths)

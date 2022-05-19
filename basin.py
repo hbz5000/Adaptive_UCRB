@@ -120,11 +120,16 @@ class Basin():
     
     
     
-  def combine_rights_data(self, structure_rights_name, structure_name, structure_rights_priority, structure_rights_decree, reservoir_rights_name, reservoir_name, reservoir_rights_priority, reservoir_rights_decree):
+  def combine_rights_data(self, structure_rights_name, structure_name, structure_rights_priority, structure_rights_decree, reservoir_rights_name, reservoir_name, reservoir_rights_priority, reservoir_rights_decree, instream_rights_name, instream_rights_structure_name, instream_rights_priority, instream_rights_decree):
     structure_rights_priority.extend(reservoir_rights_priority)
     structure_rights_name.extend(reservoir_rights_name)
     structure_name.extend(reservoir_name)
     structure_rights_decree.extend(reservoir_rights_decree)
+
+    structure_rights_priority.extend(instream_rights_priority)
+    structure_rights_name.extend(instream_rights_name)
+    structure_name.extend(instream_rights_structure_name)
+    structure_rights_decree.extend(instream_rights_decree)
   
     priority_order = np.argsort(np.asarray(structure_rights_priority))
     self.rights_stack_structure_ids = []
@@ -151,8 +156,32 @@ class Basin():
       self.structures_objects[this_structure].update_demand_rights(date_use)
     for this_structure in new_deliveries:
       self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] = new_deliveries[this_structure] * 1.0
-      self.structures_objects[this_structure].update_delivery_rights(date_use)    
-
+      self.structures_objects[this_structure].update_delivery_rights(date_use)
+      
+  def update_structure_plan_flows(self, new_plan_flows, date_use):
+    station_used_list = []
+    for station_start in self.plan_flows_list:
+      for station_use in self.plan_flows_list[station_start]:
+        if station_use in station_used_list:
+          self.structures_objects[station_use].routed_plans.loc[date_use, 'plan'] += new_plan_flows[station_start] * 1.0
+        else:
+          self.structures_objects[station_use].routed_plans.loc[date_use, 'plan'] = new_plan_flows[station_start] * 1.0
+          station_used_list.append(station_use)
+      
+  def update_structure_outflows(self, new_releases, date_use):
+    for this_structure in self.structures_objects:
+      if this_structure + '_outflow' in new_releases:
+        self.structures_objects[this_structure].adaptive_monthly_outflows.loc[date_use, 'outflows'] = new_releases[this_structure + '_outflow'] * 1.0
+      if this_structure + '_location' in new_releases:
+        self.structures_objects[this_structure].adaptive_monthly_control.loc[date_use, 'location'] = str(new_releases[this_structure + '_location'])
+  
+  def update_structure_storage(self, structure_storage, datetime_val):
+    for this_structure in self.structures_objects:
+      if this_structure in structure_storage:
+        self.structures_objects[this_structure].adaptive_reservoir_timeseries.loc[datetime_val, this_structure] = structure_storage[this_structure] * 1.0
+      if this_structure + '_diversions' in structure_storage:
+        self.structures_objects[this_structure].adaptive_reservoir_timeseries.loc[datetime_val, this_structure + '_diversions'] = structure_storage[this_structure + '_diversions'] * 1.0
+  
   def adjust_structure_deliveries(self):
     monthly_deliveries = {}
     for structure_name in self.structures_objects:
@@ -166,7 +195,7 @@ class Basin():
 
     return monthly_deliveries
           
-  def set_structure_demands(self, structure_demands, structure_demands_adaptive = 'none'):
+  def set_structure_demands(self, structure_demands, structure_demands_adaptive = 'none', use_rights = True):
     len_hist_demands = 0
     for structure_name in structure_demands:
       if structure_name in self.structures_objects:
@@ -177,7 +206,7 @@ class Basin():
           self.structures_objects[structure_name].adaptive_monthly_demand = self.structures_objects[structure_name].historical_monthly_demand.copy(deep = True)
         
         len_hist_demands = len(structure_demands[structure_name])
-      else:
+      else:        
         self.structures_objects[structure_name] = Structure(structure_name, 'unknown')
         self.structures_objects[structure_name].historical_monthly_demand = pd.DataFrame(structure_demands[structure_name].values, index = structure_demands.index, columns = ['demand',])
         try:
@@ -191,12 +220,13 @@ class Basin():
       except:
         self.structures_objects[structure_name].historical_monthly_demand = pd.DataFrame(np.zeros(len(structure_demands.index)), index = structure_demands.index, columns = ['demand',])
         self.structures_objects[structure_name].adaptive_monthly_demand = self.structures_objects[structure_name].historical_monthly_demand.copy(deep = True)
-      self.structures_objects[structure_name].make_sorted_rights_list()
-      if isinstance(structure_demands_adaptive, pd.DataFrame):
-        self.structures_objects[structure_name].use_adaptive = True
-      self.structures_objects[structure_name].assign_demand_rights()
+      if use_rights:
+        self.structures_objects[structure_name].make_sorted_rights_list()
+        if isinstance(structure_demands_adaptive, pd.DataFrame):
+          self.structures_objects[structure_name].use_adaptive = True
+        self.structures_objects[structure_name].assign_demand_rights()
 
-  def set_structure_deliveries(self, structure_deliveries, structure_deliveries_adaptive = 'none'):
+  def set_structure_deliveries(self, structure_deliveries, structure_deliveries_adaptive = 'none', use_rights = True):
     len_hist_deliveries = 0
     for structure_name in structure_deliveries:
       if structure_name in self.structures_objects:
@@ -216,7 +246,6 @@ class Basin():
           self.structures_objects[structure_name].adaptive_monthly_deliveries = pd.DataFrame(structure_deliveries_adaptive[structure_name].values, index = structure_deliveries_adaptive.index, columns = ['deliveries',])
         except:
           self.structures_objects[structure_name].adaptive_monthly_deliveries = self.structures_objects[structure_name].historical_monthly_deliveries.copy(deep = True)
-
     for structure_name in self.structures_objects:
       no_xdd = False
       try:
@@ -228,9 +257,300 @@ class Basin():
         self.structures_objects[structure_name].adaptive_monthly_deliveries = self.structures_objects[structure_name].historical_monthly_deliveries.copy(deep = True)
       if isinstance(structure_deliveries_adaptive, pd.DataFrame):
         self.structures_objects[structure_name].use_adaptive = True
-      self.structures_objects[structure_name].assign_delivery_rights()
+      if use_rights:
+        self.structures_objects[structure_name].assign_delivery_rights()
+      
+  def find_annual_change_by_wyt(self, start_year, end_year, structure_print_list, iteration_no):
+    
+    column_name_df = []
+    max_change_other = 0
+    max_change_mf = 0
+    max_change_exp = 0
+    for x in structure_print_list:
+      column_name_df.append(x + '_baseline')
+      column_name_df.append(x + '_reoperation')
+      
+    delivery_scenarios = pd.DataFrame(columns = column_name_df, index = np.arange(start_year, end_year+1))
+    snowpack_vals = np.zeros(end_year - start_year + 1)
+    for yearnum in range(start_year, end_year + 1):
+      datetime_val = datetime(yearnum, 9, 1, 0, 0)
+      snowpack_vals[yearnum-start_year] = self.basin_snowpack['14010001'].loc[datetime_val, 'basinwide_average']
 
-  def set_structure_types(self, aggregated_diversions, irrigation_shapefile, ditches_shapefile, structures_shapefile):
+    index_sort = np.argsort(snowpack_vals)
+    for structure_name in self.structures_objects:
+      annual_deliveries = []
+      total_annual_deliveries = 0.0
+      for index, row in self.structures_objects[structure_name].historical_monthly_deliveries.iterrows():
+        if index.year >= start_year and index.year <= end_year:
+          if index.month == 4 and index.year > start_year:
+            annual_deliveries.append(total_annual_deliveries)
+            total_annual_deliveries = 0.0
+          total_annual_deliveries += row['deliveries']/1000.0
+      annual_deliveries.append(total_annual_deliveries) 
+      annual_deliveries = np.asarray(annual_deliveries)
+      
+      annual_deliveries2 = []
+      total_annual_deliveries = 0.0
+      index_counter = 0
+      for index, row in self.structures_objects[structure_name].adaptive_monthly_deliveries.iterrows():
+        if index.year >= start_year and index.year <= end_year:
+          if index.month == 4 and index.year > start_year:
+            annual_deliveries2.append(total_annual_deliveries)
+            total_annual_deliveries = 0.0
+          total_annual_deliveries += row['deliveries']/1000.0
+      annual_deliveries2.append(total_annual_deliveries)        
+      annual_deliveries2 = np.asarray(annual_deliveries2)
+
+      annual_demands = []
+      self.structures_objects[structure_name].historical_monthly_demand.index = pd.to_datetime(self.structures_objects[structure_name].historical_monthly_demand.index)
+      total_annual_deliveries = 0.0
+      for index, row in self.structures_objects[structure_name].historical_monthly_demand.iterrows():
+        if index.year >= start_year and index.year <= end_year:
+          if index.month == 4 and index.year > start_year:
+            annual_demands.append(total_annual_deliveries)
+            total_annual_deliveries = 0.0
+          total_annual_deliveries += row['demand']/1000.0        
+      annual_demands.append(total_annual_deliveries)        
+      annual_demands = np.asarray(annual_demands)
+      
+      delivery_change = annual_deliveries2 - annual_deliveries
+      if 'Irrigation' in self.structures_objects[structure_name].structure_types:
+        change_years = delivery_change < 0.0
+        for x in range(0,  len(annual_deliveries2)-10):
+          num_per = np.sum(change_years[x:(x+10)])
+          max_change_other = max(max_change_other, num_per)
+      elif 'Minimum Flow' in self.structures_objects[structure_name].structure_types:        
+        change_years = delivery_change < 0.0
+        for x in range(0,  len(annual_deliveries2)-10):
+          num_per = np.sum(change_years[x:(x+10)])
+          max_change_mf = max(max_change_mf, num_per)
+      elif 'Export' in self.structures_objects[structure_name].structure_types:
+        change_years = delivery_change > 0.0
+        for x in range(0,  len(annual_deliveries2)-10):
+          num_per = np.sum(change_years[x:(x+10)])
+          max_change_exp = max(max_change_exp, num_per)
+      elif 'Municipal' in self.structures_objects[structure_name].structure_types:
+        change_years = delivery_change < 0.0
+        for x in range(0,  len(annual_deliveries2)-10):
+          num_per = np.sum(change_years[x:(x+10)])
+          max_change_other = max(max_change_other, num_per)
+
+
+      if np.sum(annual_demands) > 0.0:
+        self.structures_objects[structure_name].baseline_filled = np.sum(annual_deliveries) / np.sum(annual_demands)
+      elif np.sum(annual_deliveries) > 0.0:
+        self.structures_objects[structure_name].baseline_filled = np.sum(annual_deliveries) / (float(len(annual_deliveries)) * np.max(annual_deliveries))
+      else:
+        self.structures_objects[structure_name].baseline_filled = 0.0
+
+      if structure_name in structure_print_list:
+        delivery_scenarios[structure_name + '_baseline'] = annual_deliveries
+        delivery_scenarios[structure_name + '_reoperation'] = annual_deliveries2
+      wet_years = []
+      normal_years = []
+      dry_years = []
+      num_vals = len(index_sort) / 3
+      counter = 0
+      counter_type = 0
+      for x in range(0, len(index_sort)):
+        index_use = index_sort[x]
+        if counter_type == 0:
+          dry_years.append(annual_deliveries2[index_use] - annual_deliveries[index_use])
+        elif counter_type == 1:
+          normal_years.append(annual_deliveries2[index_use] - annual_deliveries[index_use])
+        else:
+          wet_years.append(annual_deliveries2[index_use] - annual_deliveries[index_use])
+        counter += 1
+        if counter > num_vals:
+          counter = 0
+          counter_type += 1
+      self.structures_objects[structure_name].average_change = {}
+      self.structures_objects[structure_name].average_change['wet'] = np.mean(wet_years)
+      self.structures_objects[structure_name].average_change['normal'] = np.mean(normal_years)
+      self.structures_objects[structure_name].average_change['dry'] = np.mean(dry_years)
+      self.structures_objects[structure_name].average_change['2002'] = annual_deliveries2[2002-start_year] - annual_deliveries[2002-start_year]
+      self.structures_objects[structure_name].average_change['1955'] = annual_deliveries2[1955-start_year] - annual_deliveries[1955-start_year]
+      self.structures_objects[structure_name].average_change['1977'] = annual_deliveries2[1977-start_year] - annual_deliveries[1977-start_year]
+      self.structures_objects[structure_name].average_change['all'] = np.sum(annual_deliveries2)- np.sum(annual_deliveries)
+      
+    delivery_scenarios.to_csv('total_export_deliveries.csv')
+    frequency_use = pd.DataFrame(np.asarray([max_change_exp, max_change_mf, max_change_other]))
+    frequency_use.to_csv('freq_changes_' + str(iteration_no) + '.csv')
+
+  def find_station_revenues(self, station_id, et_requirements, marginal_net_benefits, irrigation_ucrb, aggregated_diversions, year_start, year_end):
+    irrigation_structures = list(irrigation_ucrb['SW_WDID1'].astype(str))
+    month_name_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    water_demand = []
+    values_list = []
+    if station_id in irrigation_structures:
+      this_irrigated_area = irrigation_ucrb[irrigation_ucrb['SW_WDID1'] == station_id]
+    elif station_id in aggregated_diversions:
+      this_irrigated_area = gpd.GeoDataFrame()
+      for ind_structure in aggregated_diversions[station_id]:
+        if ind_structure in irrigation_structures:
+          this_irrigated_area_int = irrigation_ucrb[irrigation_ucrb['SW_WDID1'] == ind_structure]
+          this_irrigated_area = pd.concat([this_irrigated_area, this_irrigated_area_int])
+    if station_id == '7200646':
+      station_id = '7200646_I'
+    for index_ia, row_ia in this_irrigated_area.iterrows():
+      water_demand.append(row_ia['ACRES'] * et_requirements[row_ia['CROP_TYPE']] /12.0)
+      values_list.append(marginal_net_benefits[row_ia['CROP_TYPE']] * 12.0 / et_requirements[row_ia['CROP_TYPE']])
+    water_demand = np.asarray(water_demand)
+    values_list = np.asarray(values_list)
+    sorted_index = np.argsort(values_list)
+    sorted_demand = water_demand[sorted_index]
+    sorted_values = values_list[sorted_index]
+    total_water_consumption = 0.0
+    total_annual_revenue = np.zeros(year_end - year_start + 1)
+    for index, row in self.structures_objects[station_id].adaptive_monthly_deliveries.iterrows():
+      month_id = month_name_list[index.month - 1]
+      total_demand = self.structures_objects[station_id].historical_monthly_demand.loc[index, 'demand']
+      
+      total_water_consumption += total_demand - row['deliveries'] #* (1.0 - self.structures_objects[station_id].return_fraction.loc[month_id, station_id])
+      print(month_id, end = " ")
+      print(total_water_consumption, end = " ")
+      print(total_demand, end = " ")
+      print(row['deliveries'])
+      if month_id == 'SEP':
+        if index.year >= year_start and index.year <= year_end:
+          for mnb, etc in zip(sorted_values, sorted_demand):
+            total_annual_revenue[index.year - year_start] += mnb * min(etc, total_water_consumption)
+            total_water_consumption = max(total_water_consumption - etc, 0.0)
+            print(index.year, end = " ")
+            print(mnb, end = " ")
+            print(etc, end = " ")
+            print(total_annual_revenue[index.year - year_start], end = " ")
+            print(total_water_consumption)
+            if total_water_consumption == 0.0:
+              break
+          if total_water_consumption > 0.0:
+            total_annual_revenue[index.year - year_start] += sorted_values[-1] * total_water_consumption
+        total_water_consumption = 0.0  
+    
+    return total_annual_revenue
+   
+  def find_informal_water_price(self, structure_delivery, total_monthly_deliveries, structure_purchases, structure_buyouts, purchase_multiplier, buyout_charge):
+    total_deliveries = pd.read_csv('total_export_deliveries.csv')
+   
+    structure_buyouts['datetime'] = pd.to_datetime(structure_buyouts['date'])
+    buyout_years = np.zeros(len(structure_buyouts.index))
+    buyout_months = np.zeros(len(structure_buyouts.index))
+    counter = 0
+    for index, row in structure_buyouts.iterrows():
+      buyout_years[counter] = row['datetime'].year
+      buyout_months[counter] = row['datetime'].month
+      counter += 1
+    structure_buyouts['yearnum'] = buyout_years  
+    structure_buyouts['monthnum'] = buyout_months  
+    structure_purchases = structure_purchases.drop_duplicates()
+    structure_purchases['datetime'] = pd.to_datetime(structure_purchases['date'])
+    purchase_years = np.zeros(len(structure_purchases.index))
+    purchase_months = np.zeros(len(structure_purchases.index))
+    counter = 0
+    for index, row in structure_purchases.iterrows():
+      purchase_years[counter] = row['datetime'].year
+      purchase_months[counter] = row['datetime'].month
+      counter += 1
+    structure_purchases['yearnum'] = purchase_years
+    structure_purchases['monthnum'] = purchase_months
+    counter = 1950
+    cost_per_af = []
+    total_export = []
+    #for index, row in total_deliveries.iterrows():
+    for index, row in total_monthly_deliveries.iterrows():
+      total_increase = row[structure_delivery + '_res_diversion']
+      #total_increase = (row[structure_delivery + '_reoperation'] - row[structure_delivery + '_baseline']) * 1000.0
+      total_cost = 0.0
+      if total_increase > 0.0:
+        this_year_purchases = structure_purchases[np.logical_and(structure_purchases['yearnum'] == index.year, structure_purchases['monthnum'] == index.month)]
+        this_year_buyouts = structure_buyouts[np.logical_and(structure_buyouts['yearnum'] == index.year, structure_buyouts['monthnum'] == index.month)]
+        this_year_buyouts = this_year_buyouts.drop_duplicates(subset = 'structure')
+        for index, row in this_year_purchases.iterrows():          
+          total_cost += row['demand'] * row['consumptive'] * self.structures_objects[row['structure']].purchase_price * purchase_multiplier
+        for index, row in this_year_buyouts.iterrows():          
+          total_cost += row['demand_purchase'] * buyout_charge
+        cost_per_af.append(total_cost/total_increase)
+        total_export.append(total_increase)
+      counter += 1
+    
+    return np.asarray(cost_per_af), np.asarray(total_export)
+    
+  def set_structure_outflows(self, structure_outflows):
+    for structure_name in self.structures_objects:
+      if structure_name + '_outflow' in structure_outflows:
+        self.structures_objects[structure_name].historical_monthly_outflows = pd.DataFrame(structure_outflows[structure_name + '_outflow'].values, index = structure_outflows.index, columns = ['outflows',])
+        self.structures_objects[structure_name].adaptive_monthly_outflows = self.structures_objects[structure_name].historical_monthly_outflows.copy(deep = True)
+      else:
+        self.structures_objects[structure_name].historical_monthly_outflows = pd.DataFrame(np.ones(len(structure_outflows.index))*(-999.0), index = structure_outflows.index, columns = ['outflows',])
+        self.structures_objects[structure_name].adaptive_monthly_outflows = pd.DataFrame(np.ones(len(structure_outflows.index))*(-999.0), index = structure_outflows.index, columns = ['outflows',])
+      if structure_name + '_location' in structure_outflows:
+        self.structures_objects[structure_name].historical_monthly_control = pd.DataFrame(list(structure_outflows[structure_name + '_location']), index = structure_outflows.index, columns = ['location',])
+        self.structures_objects[structure_name].adaptive_monthly_control = self.structures_objects[structure_name].historical_monthly_control.copy(deep = True)
+      else:
+        self.structures_objects[structure_name].historical_monthly_control = pd.DataFrame(np.ones(len(structure_outflows.index))*(-999.0), index = structure_outflows.index, columns = ['location',])
+        self.structures_objects[structure_name].adaptive_monthly_control = pd.DataFrame(np.ones(len(structure_outflows.index))*(-999.0), index = structure_outflows.index, columns = ['location',])
+    
+  def set_return_fractions(self, structure_returns):
+    month_name_list = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
+    for structure_name in self.structures_objects:
+      self.structures_objects[structure_name].return_fraction = pd.DataFrame(np.zeros(len(month_name_list)), index = month_name_list, columns = [structure_name,])
+    for structure_name in structure_returns:
+      if structure_name in self.structures_objects:
+        self.structures_objects[structure_name].return_fraction = pd.DataFrame(structure_returns[structure_name], index = month_name_list, columns = [structure_name,])
+  def set_plan_flows_list(self, downstream_data, start_point_list,  end_point):
+    station_id_column_length = 12
+    station_id_column_start = 0
+    downstream_station_id_column_start = 36
+    downstream_station_id_column_end = 48
+    month_name_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    self.plan_flows_list = {}
+    for j in range(0,len(downstream_data)):
+      if downstream_data[j][0] != '#':
+        first_line = int(j * 1)
+        break
+    for j in range(first_line, len(downstream_data)):
+      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
+      if station_id == 'end_point':
+        break
+      if station_id in start_point_list:
+        self.plan_flows_list[station_id] = []
+      for x in self.plan_flows_list:
+        self.plan_flows_list[x].append(station_id)
+  def set_plan_flows_2(self, plan_flows):
+    for station_name in self.structures_objects:
+      self.structures_objects[station_name].routed_plans = pd.DataFrame(index = plan_flows.index, columns = ['plan',])
+      self.structures_objects[station_name].routed_plans['plan'] = np.zeros(len(plan_flows.index))
+    for index, row in plan_flows.iterrows():
+      for station_start in self.plan_flows_list:
+        for station_use in self.plan_flows_list[station_start]:
+          self.structures_objects[station_use].routed_plans.loc[index, 'plan'] += row[station_start] * 1.0
+          
+  def set_plan_flows(self, plan_flows, downstream_data):
+    station_id_column_length = 12
+    station_id_column_start = 0
+    downstream_station_id_column_start = 36
+    downstream_station_id_column_end = 48
+    month_name_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    for j in range(0,len(downstream_data)):
+      if downstream_data[j][0] != '#':
+        first_line = int(j * 1)
+        break
+    for station_name in self.structures_objects:
+      self.structures_objects[station_name].routed_plans = pd.DataFrame(index = plan_flows.index, columns = ['plan',])
+      
+    for index, row in plan_flows.iterrows():
+      month_id = month_name_list[index.month - 1]
+      running_plan_flows = 0.0
+      for j in range(first_line, len(downstream_data)):
+        station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
+        if station_id + '_diversion' in plan_flows.columns:
+          running_plan_flows -= plan_flows.loc[index, station_id + '_diversion']
+        if station_id + '_release' in plan_flows.columns:
+          running_plan_flows += plan_flows.loc[index, station_id + '_release']
+        self.structures_objects[station_id].routed_plans.loc[index, 'plan'] = running_plan_flows * 1.0
+        
+      
+  def set_structure_types(self, aggregated_diversions, irrigation_shapefile, ditches_shapefile, structures_shapefile, marginal_net_benefits, et_requirements):
     irrigation_structures = list(irrigation_shapefile['SW_WDID1'].astype(str))
     ditch_structures = list(ditches_shapefile['wdid'].astype(str))
     other_structures = list(structures_shapefile['WDID'].astype(str))
@@ -372,14 +692,60 @@ class Basin():
             print('none type')
             print(structure_name, end = " ")
             print(ind_structure)
+    for structure_name in self.structures_objects:
+      if structure_name in irrigation_structures:
+        this_irrigated_area = irrigation_shapefile[irrigation_shapefile['SW_WDID1'] == structure_name]
+        self.structures_objects[structure_name].purchase_price = 9999
+        for index_ia, row_ia in this_irrigated_area.iterrows():
+          self.structures_objects[structure_name].purchase_price = min(self.structures_objects[structure_name].purchase_price, marginal_net_benefits[row_ia['CROP_TYPE']] / (et_requirements[row_ia['CROP_TYPE']] /12.0))
+        if self.structures_objects[structure_name].purchase_price == 9999:
+          self.structures_objects[structure_name].purchase_price = 100.0
     
-  def find_percent_delivered(self, marginal_net_benefits, et_requirements, aggregated_diversions, irrigation_ucrb, ditches_ucrb, structure_buyouts, structure_purchases, purchase_multiplier = 1.25, buyout_cost = 50):
+      elif structure_name in aggregated_diversions:
+        for ind_structure in aggregated_diversions[structure_name]:
+          if ind_structure in irrigation_structures:
+            this_irrigated_area = irrigation_shapefile[irrigation_shapefile['SW_WDID1'] == ind_structure]
+            self.structures_objects[structure_name].purchase_price = 9999
+            for index_ia, row_ia in this_irrigated_area.iterrows():
+              self.structures_objects[structure_name].purchase_price = min(self.structures_objects[structure_name].purchase_price, marginal_net_benefits[row_ia['CROP_TYPE']] / (et_requirements[row_ia['CROP_TYPE']] /12.0))
+            if self.structures_objects[structure_name].purchase_price == 9999:
+              self.structures_objects[structure_name].purchase_price = 100.0
+
+      elif 'Irrigation' in self.structures_objects[structure_name].structure_types:
+        self.structures_objects[structure_name].purchase_price = 100.0
+      elif 'Minimum Flow' in self.structures_objects[structure_name].structure_types:
+        self.structures_objects[structure_name].purchase_price = 100.0
+      else:
+        self.structures_objects[structure_name].purchase_price = 1000.0
+        
+  def find_change_by_wyt(self, start_year, end_year):
+    cum_change_delivery = np.zeros(end_year - start_year + 1)
+    station_id_column_start = 0
+    station_id_column_length = 12
+    for j in range(first_line, len(downstream_data)):
+      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
+      initial_year_toggle = 0
+      for index, row in self.structures_objects[station_id].historical_monthly_deliveries.iterrows():
+        if initial_year_toggle == 0:
+          initial_year = index.year
+          initial_year_toggle = 1
+        if index.month > 9:
+          year_num = index.year - initial_year
+        else:
+          year_num = index.year - initial_year - 1
+        cum_change_delivery[year_num] += self.structures_objects[station_id].adaptive_monthly_deliveries.loc[index, 'deliveries'] - row['deliveries']
+      self.structures_objects[station_id].cumulative_change = np.sort(cum_change_delivery)
+  
+    
+  def find_percent_delivered(self, marginal_net_benefits, et_requirements, aggregated_diversions, irrigation_ucrb, ditches_ucrb, structure_buyouts, structure_purchases, downstream_data, purchase_multiplier = 1.25, buyout_cost = 50):
     irrigation_structures = list(irrigation_ucrb['SW_WDID1'].astype(str))
     ditch_structures = list(ditches_ucrb['wdid'].astype(str))
-    percent_filled_columns = ['pct_filled_baseline', 'total_deliveries', 'structure_name', 'structure_types', 'lost_revenue']
+    percent_filled_columns = ['pct_filled_baseline', 'total_deliveries', 'structure_name', 'structure_types', 'lost_revenue',]
     for x in range(0, 10):
       percent_filled_columns.append('change_' + str(x))
       percent_filled_columns.append('revene_' + str(x))
+      percent_filled_columns.append('cum_change_neg' + str(x))
+      percent_filled_columns.append('cum_change_pos' + str(x))
     percent_filled = pd.DataFrame(index = self.structures_objects, columns = percent_filled_columns)
     baseline_filled = np.zeros(len(self.structures_objects))
     total_deliveries = np.zeros(len(self.structures_objects))
@@ -387,10 +753,33 @@ class Basin():
     for x in range(0, 10):
       change_dict['change_' + str(x)] = np.zeros(len(self.structures_objects))
       change_dict['revenue_' + str(x)] = np.zeros(len(self.structures_objects))
+      change_dict['cum_change_pos' + str(x)] = np.zeros(len(self.structures_objects))
+      change_dict['cum_change_neg' + str(x)] = np.zeros(len(self.structures_objects))
     min_cost = np.zeros(len(self.structures_objects))
     counter = 0
     structure_list = []
     structure_type_list = []
+    for j in range(0,len(downstream_data)):
+      if downstream_data[j][0] != '#':
+        first_line = int(j * 1)
+        break
+    cum_change_delivery = np.zeros(200)
+    station_id_column_start = 0
+    station_id_column_length = 12
+    for j in range(first_line, len(downstream_data)):
+      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
+      initial_year_toggle = 0
+      for index, row in self.structures_objects[station_id].historical_monthly_deliveries.iterrows():
+        if initial_year_toggle == 0:
+          initial_year = index.year
+          initial_year_toggle = 1
+        if index.month > 9:
+          year_num = index.year - initial_year
+        else:
+          year_num = index.year - initial_year - 1
+        cum_change_delivery[year_num] += self.structures_objects[station_id].adaptive_monthly_deliveries.loc[index, 'deliveries'] - row['deliveries']
+      self.structures_objects[station_id].cumulative_change = np.sort(cum_change_delivery)
+
     for structure_name in self.structures_objects:
       if structure_name in irrigation_structures:
         this_irrigated_area = irrigation_ucrb[irrigation_ucrb['SW_WDID1'] == structure_name]
@@ -414,6 +803,8 @@ class Basin():
         min_cost[counter] = 200.0
       else:
         min_cost[counter] = 1000.0
+      if structure_name == '5100848':
+        counter_for_puchase = counter * 1 + 0
       initial_year_toggle = 0
       hist_demand = np.zeros(200)
       for index, row in self.structures_objects[structure_name].historical_monthly_demand.iterrows():
@@ -468,7 +859,7 @@ class Basin():
         
       structure_purchases['datetime_vals'] = pd.to_datetime(structure_purchases['date'])
       these_buyouts = structure_purchases[structure_purchases['structure'].astype(str) == structure_name]
-      for index, row in structure_purchases.iterrows():
+      for index, row in these_buyouts.iterrows():
         if row['datetime_vals'].month > 9:
           year_num = row['datetime_vals'].year - initial_year
         else:
@@ -477,7 +868,7 @@ class Basin():
 
       structure_buyouts['datetime_vals'] = pd.to_datetime(structure_buyouts['date'])
       these_buyouts = structure_buyouts[structure_buyouts['structure'].astype(str) == structure_name]
-      for index, row in structure_buyouts.iterrows():
+      for index, row in these_buyouts.iterrows():
         if row['datetime_vals'].month > 9:
           year_num = row['datetime_vals'].year - initial_year
         else:
@@ -488,12 +879,17 @@ class Basin():
       sorted_change = np.sort(delivery_change)
       sorted_index = np.argsort(delivery_change)
       sorted_revenue = total_revenue[sorted_index]
-      
+      sorted_cumulative_change = np.sort(self.structures_objects[structure_name].cumulative_change)
       if np.sum(hist_demand) > 0.0:
         baseline_filled[counter] = np.sum(hist_delivery) / np.sum(hist_demand)
       elif np.sum(hist_delivery) > 0.0:
-        baseline_filled[counter] = 1.0
+        total_years = self.structures_objects[structure_name].historical_monthly_deliveries.index[-1].year - self.structures_objects[structure_name].historical_monthly_deliveries.index[0].year
+        total_decree = 0.0
+        for sri in self.structures_objects[structure_name].rights_list:
+          total_decree += self.structures_objects[structure_name].rights_objects[sri].decree_af
+        baseline_filled[counter] = np.sum(hist_delivery) / (total_years* 365.0 * total_decree / 30.0)
       counter_change = 0
+      counter_change_2 = 0
       for x in range(0, len(sorted_change)):
         if sorted_change[x] != 0.0:
           if 'change_' + str(counter_change) in change_dict:
@@ -506,6 +902,12 @@ class Basin():
             change_dict['revenue_' + str(counter_change)][counter] = sorted_revenue[x]
           
           counter_change += 1
+          
+      for x in range(0, 10):
+        change_dict['cum_change_neg' + str(x)][counter] = self.structures_objects[structure_name].cumulative_change[x]
+      for x in range(1, 11):
+        change_dict['cum_change_pos' + str(x-1)][counter] = self.structures_objects[structure_name].cumulative_change[0-x]
+        
       total_deliveries[counter] = np.sum(hist_delivery) / 63.0
       if 'Irrigation' in self.structures_objects[structure_name].structure_types:
         structure_type_list.append('Irrigation')
@@ -520,15 +922,69 @@ class Basin():
 
       structure_list.append(structure_name)
       counter += 1
-      
+    snowpack_list = []
+    rev_orig = []
+    rev_adapt = []
+    structure_use = '5100848'
+    this_structure_cost = min_cost[counter_for_puchase]
+    ind_buyouts = structure_buyouts[structure_buyouts['structure'].astype(str) == structure_use]
+    ind_purchases = structure_purchases[structure_purchases['structure'].astype(str) == structure_use]
+    ind_buyouts['date'] = pd.to_datetime(ind_buyouts['date'])
+    ind_purchases['date'] = pd.to_datetime(ind_purchases['date'])
+    for year_num in range(1950, 2014): 
+      datetime_val = datetime(year_num, 5, 1, 0, 0)
+      snowpack_list.append(self.basin_snowpack['14010001'].loc[datetime_val, 'basinwide_average'])
+
+      total_init_deliv = 0.0
+      total_new_deliv = 0.0
+      annual_buyouts = 0.0
+      annual_purchases = 0.0
+      for month_num in range(10, 13):
+        datetime_val_month = datetime(year_num-1, month_num, 1, 0, 0)
+        total_init_deliv += self.structures_objects[structure_use].historical_monthly_deliveries.loc[datetime_val_month, 'deliveries']
+        total_new_deliv += self.structures_objects[structure_use].adaptive_monthly_deliveries.loc[datetime_val_month, 'deliveries']
+        this_month_buyouts = ind_buyouts[ind_buyouts['date'].astype(str) == datetime_val_month]
+        this_month_purchases = ind_purchases[ind_purchases['date'].astype(str) == datetime_val_month]
+        annual_buyouts += np.sum(this_month_buyouts['demand'])
+        annual_purchases += np.sum(this_month_purchases['demand'])
+        
+      for month_num in range(1, 10):
+        datetime_val_month = datetime(year_num, month_num, 1, 0, 0)
+        total_init_deliv += self.structures_objects[structure_use].historical_monthly_deliveries.loc[datetime_val_month, 'deliveries']
+        total_new_deliv += self.structures_objects[structure_use].adaptive_monthly_deliveries.loc[datetime_val_month, 'deliveries']
+        this_month_buyouts = ind_buyouts[ind_buyouts['date'] == datetime_val_month]
+        this_month_purchases = ind_purchases[ind_purchases['date'] == datetime_val_month]
+        annual_buyouts += np.sum(this_month_buyouts['demand'])
+        annual_purchases += np.sum(this_month_purchases['demand'])
+
+      rev_orig.append(total_init_deliv * this_structure_cost)  
+      rev_adapt.append(total_new_deliv * this_structure_cost + annual_purchases * purchase_multiplier * this_structure_cost + annual_buyouts * buyout_cost)  
+    fig, ax = plt.subplots()
+    ax.scatter(snowpack_list, rev_orig, c = 'black', s = 25)    
+    ax.scatter(snowpack_list, rev_adapt, c = 'indianred', s = 25)    
+    ax.set_xlabel('May 1 Snowpack % of Average', fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')    
+    ax.set_ylabel('Total Revenue, Red Top Valley ($MM)', fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')    
+    legend_location = 'upper right'
+    #legend_location_alt = 'upper right'
+    legend_element = [Patch(facecolor='black', edgecolor='black', label='Historical Baseline'),
+                     Patch(facecolor='indianred', edgecolor='black', label='w/ Informal Transfers')]
+    #legend_element2 = [Patch(facecolor='indianred', edgecolor='black', label='Purchase Partners')]
+    #legend_element3 = [Patch(facecolor='steelblue', edgecolor='black', label='Buyout Partners')]
+    #legend_element4 = [Patch(facecolor='black', edgecolor='black', label='Uninvolved Parties')]
+    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':14}
+    ax.legend(handles=legend_element, loc=legend_location, prop=legend_properties)
+
+    plt.show()
     percent_filled['pct_filled_baseline'] = baseline_filled
     percent_filled['total_deliveries'] = total_deliveries
     percent_filled['structure_name'] = structure_list
     percent_filled['structure_types'] = structure_type_list
-    for x in range(0, 100):
+    for x in range(0, 10):
       if 'change_' + str(x) in change_dict:
         percent_filled['change_' + str(x)] = change_dict['change_' + str(x)]
         percent_filled['revenue_' + str(x)] = change_dict['revenue_' + str(x)]
+        percent_filled['cum_change_pos' + str(x)] = change_dict['cum_change_pos' + str(x)]
+        percent_filled['cum_change_neg' + str(x)] = change_dict['cum_change_neg' + str(x)]
       else:
         break
     
@@ -543,6 +999,14 @@ class Basin():
       self.structures_objects[reservoir_name].initialize_right(rights_name, rights_priority, 0.0, fill_type)
       
   def set_rights_to_structures(self, rights_name_list, structure_name_list, rights_priority_list, rights_decree_list):
+    for rights_name, structure_name, rights_priority, rights_decree in zip(rights_name_list, structure_name_list, rights_priority_list, rights_decree_list):
+      if structure_name not in self.structures_objects:
+        self.structures_list['unknown'].append(structure_name)
+        self.structures_list['total'].append(structure_name)
+        self.structures_objects[structure_name] = Structure(structure_name, 'unknown')
+      self.structures_objects[structure_name].initialize_right(rights_name, rights_priority, rights_decree)
+
+  def set_rights_to_instream(self, rights_name_list, structure_name_list, rights_priority_list, rights_decree_list):
     for rights_name, structure_name, rights_priority, rights_decree in zip(rights_name_list, structure_name_list, rights_priority_list, rights_decree_list):
       if structure_name not in self.structures_objects:
         self.structures_list['unknown'].append(structure_name)
@@ -602,20 +1066,30 @@ class Basin():
             lookahead_datetime = datetime(year_num, lookahead_month + 10, 1, 0, 0)
           remaining_usable_flow += release_data.loc[lookahead_datetime, res_station + '_diverted'] + release_data.loc[lookahead_datetime, res_station + '_available']
           
-        if control_location in flow2:
-          snowpack[control_location].append(current_snowpack)
-          flow2[control_location].append(remaining_usable_flow)
-        snowpack['all'].append(current_snowpack)
-        flow2['all'].append(remaining_usable_flow)
+        if remaining_usable_flow < 0.0 or pd.isna(current_snowpack):
+          skip_this = 1
+        else:
+          if control_location in flow2:
+            snowpack[control_location].append(current_snowpack)
+            flow2[control_location].append(remaining_usable_flow)
+          snowpack['all'].append(current_snowpack)
+          flow2['all'].append(remaining_usable_flow)
 
       coef[month_index[month_num]] = {}
       for control_loc in control_location_list:        
         coef[month_index[month_num]][control_loc] = np.polyfit(np.asarray(snowpack[control_loc]), np.asarray(flow2[control_loc]), 1)
-      coef[month_index[month_num]]['all'] =  np.polyfit(np.asarray(snowpack['all']), np.asarray(flow2['all']), 1)
-  
+      use_av = False
+      try:
+        coef[month_index[month_num]]['all'] =  np.polyfit(np.asarray(snowpack['all']), np.asarray(flow2['all']), 1)
+      except:
+        use_av = True      
+      if use_av:
+        coef[month_index[month_num]]['all'] = np.zeros(2)
+        coef[month_index[month_num]]['all'][0] = 0.0
+        coef[month_index[month_num]]['all'][1] = np.mean(np.asarray(flow2['all']))        
     return coef
 
-  def find_available_water(self, release_data, snow_coefs, ytd_diversions, res_station, snow_station, datetime_val):
+  def find_available_water(self, snow_coefs, ytd_diversions, res_station, snow_station, datetime_val):
     total_water = []
     month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
 
@@ -626,117 +1100,198 @@ class Basin():
       month_val = month_index[datetime_val.month - 10]
     else:
       month_val = month_index[datetime_val.month + 2]
-    control_location = release_data.loc[datetime_val, res_station + '_location']
+    control_location = self.structures_objects[res_station].adaptive_monthly_control.loc[datetime_val, 'location']
     if control_location in snow_coefs[month_val]:
       available_snowmelt = (self.basin_snowpack[snow_station].loc[datetime_val, 'basinwide_average'] * snow_coefs[month_val][control_location][0] + snow_coefs[month_val][control_location][1])/1000.0
     else:
       available_snowmelt = (self.basin_snowpack[snow_station].loc[datetime_val, 'basinwide_average'] * snow_coefs[month_val]['all'][0] + snow_coefs[month_val]['all'][1])/1000.0
-    total_water = available_storage + already_diverted + available_snowmelt + ytd_diversions
+    total_water = available_storage + available_snowmelt + ytd_diversions
 
-    return total_water, already_diverted
+    return total_water
 
-  def find_adaptive_purchases(self, downstream_data, res_station, date_use, control_location, total_physical_supply):
+  def find_adaptive_purchases(self, downstream_data, res_station, date_use):
 
     station_id_column_length = 12
     station_id_column_start = 0
+    downstream_station_id_column_start = 36
+    downstream_station_id_column_end = 48
+    
     diversion_structures = ['5104601', '5104603', '5104625', '5104634', '5104655', '5104700', '3900574', '3704614', '3804613', '3804617', '3804625', '5103710', '5100958', '5103695']
     available_purchases = {}
-    purchase_types = ['right',  'structure', 'demand', 'priority','position']
+    purchase_types = ['right',  'structure', 'demand', 'priority', 'consumptive_fraction']
     curr_position = 0
-
+    month_name_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    month_id = month_name_list[date_use.month - 1]
+    current_control_location = self.structures_objects[res_station].adaptive_monthly_control.loc[date_use, 'location']
+    #total_physical_supply = self.structures_objects[station_id].adaptive_monthly_outflows.loc[datetime_val, 'outflows'] * 1.0
+    total_physical_supply = 999999.9
+    for j in range(0,len(downstream_data)):
+      if downstream_data[j][0] != '#':
+        first_line = int(j * 1)
+        break
+    start_station = str(res_station)
+    reservoir_right = self.structures_objects[res_station].sorted_rights[0]
     for rt in purchase_types:
       available_purchases[rt] = []
+    change_points_structure = []
+    change_points_right_id = []
+    change_points_demand = []
+    change_points_buyout_demand = []
+    change_points_buyout_purchase = []
+    change_points_date = []
+    change_points_right = []
+    change_points_consumptive = []
+    for j in range(first_line, len(downstream_data)):
+      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
+      downstream_id = str(downstream_data[j][downstream_station_id_column_start:downstream_station_id_column_end].strip())
+      if 'Irrigation' in self.structures_objects[station_id].structure_types:
+        try:
+          for r_id in self.structures_objects[station_id].rights_list:
+            available_purchases['demand'].append(self.structures_objects[station_id].rights_objects[r_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'])
+            available_purchases['priority'].append(self.structures_objects[station_id].rights_objects[r_id].priority)
+            available_purchases['right'].append(r_id)
+            available_purchases['structure'].append(station_id)
+            available_purchases['consumptive_fraction'].append(1.0 - self.structures_objects[station_id].return_fraction.loc[month_id, station_id])
+        except:
+          pass
+      
+      if station_id == start_station:
+        total_available_supply = max(self.structures_objects[station_id].adaptive_monthly_outflows.loc[date_use, 'outflows'] - max(self.structures_objects[station_id].routed_plans.loc[date_use, 'plan'], 0.0), 0.0)
+        if total_available_supply > -100.0:
+          for ind_right in self.structures_objects[station_id].sorted_rights:
+            if self.structures_objects[station_id].rights_objects[ind_right].priority > self.structures_objects[res_station].rights_objects[reservoir_right].priority:
+              total_available_supply += self.structures_objects[station_id].rights_objects[ind_right].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+          water_exchanges_choke = total_physical_supply - total_available_supply
+          print(j, end = " ")
+          print(station_id, end = " ")
+          print(start_station, end = " ")
+          print(total_available_supply, end = " ")
+          print(total_physical_supply, end = " ")
+          print(water_exchanges_choke, end = " ")
+          print(len(available_purchases['priority']), end = " ")
+          print(current_control_location, end = " ")
+          print(available_purchases['structure'])
+          if water_exchanges_choke > 0.0:
+            for rt in purchase_types:
+              available_purchases[rt] = np.asarray(available_purchases[rt])
+            sorted_order = np.argsort(available_purchases['priority'] * -1.0)
+            sorted_demand = available_purchases['demand'][sorted_order]
+            sorted_rights = available_purchases['right'][sorted_order]
+            sorted_structs = available_purchases['structure'][sorted_order]
+            sorted_priorities = available_purchases['priority'][sorted_order]
+            sorted_returns = available_purchases['consumptive_fraction'][sorted_order]
+            total_demand = 0.0
+            toggle_exchange = 0
+            x = 0
+            for x in range(0, len(sorted_demand)):
+              total_demand += sorted_demand[x] * sorted_returns[x]
+              total_right_delivery = self.structures_objects[sorted_structs[x]].rights_objects[sorted_rights[x]].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+              more_senior_deliveries = 0.0
+              for ind_right in self.structures_objects[sorted_structs[x]].sorted_rights:
+                more_senior_deliveries += self.structures_objects[sorted_structs[x]].rights_objects[ind_right].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+                if ind_right == sorted_rights[x]:
+                  break
+              print(x, end = " ")
+              print(total_demand, end = " ")
+              print(total_right_delivery, end = " ")
+              print(sorted_structs[x], end = " ")
+              print(sorted_rights[x])
+              if total_right_delivery > 0.0:
+                total_structure_deliveries = self.structures_objects[sorted_structs[x]].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+                total_structure_demand = self.structures_objects[sorted_structs[x]].adaptive_monthly_demand.loc[date_use, 'demand']
+                change_points_structure.append(sorted_structs[x])
+                change_points_right_id.append(sorted_rights[x])
+                change_points_demand.append(total_right_delivery)
+                change_points_buyout_demand.append(more_senior_deliveries)
+                change_points_buyout_purchase.append(0.0)
+                change_points_date.append(date_use)
+                change_points_right.append(sorted_priorities[x])
+                change_points_consumptive.append(sorted_returns[x])
+              if total_demand > water_exchanges_choke:
+                break
+            for rt in purchase_types:
+              available_purchases[rt] = []
+            for y in range(x+1, len(sorted_demand)):
+              available_purchases['priority'].append(sorted_priorities[y])
+              available_purchases['demand'].append(sorted_demand[y])
+              available_purchases['right'].append(sorted_rights[y])
+              available_purchases['structure'].append(sorted_structs[y])
+              available_purchases['consumptive_fraction'].append(sorted_returns[y])
+            total_physical_supply -= float(total_physical_supply - total_available_supply)
+            print(change_points_right_id, end = " ")
+            print(available_purchases['right'])
+        start_station = str(downstream_id)
+        
+      if station_id == current_control_location or total_physical_supply <= 0.0:
+        for rt in purchase_types:
+          available_purchases[rt] = np.asarray(available_purchases[rt])
+        if total_physical_supply > 0.0:
+          sorted_order = np.argsort(available_purchases['priority'] * -1.0)
+          sorted_demand = available_purchases['demand'][sorted_order]
+          sorted_rights = available_purchases['right'][sorted_order]
+          sorted_structs = available_purchases['structure'][sorted_order]
+          sorted_priorities = available_purchases['priority'][sorted_order]
+          sorted_returns = available_purchases['consumptive_fraction'][sorted_order]
+          total_demand = 0.0
+          toggle_exchange = 0
+          for x in range(0, len(sorted_demand)):
+            total_demand += sorted_demand[x] * sorted_returns[x]
+            total_right_delivery = self.structures_objects[sorted_structs[x]].rights_objects[sorted_rights[x]].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+            if total_right_delivery > 0.0:
+              total_structure_deliveries = self.structures_objects[sorted_structs[x]].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
+              total_structure_demand = self.structures_objects[sorted_structs[x]].adaptive_monthly_demand.loc[date_use, 'demand']
+              change_points_structure.append(sorted_structs[x])
+              change_points_right_id.append(sorted_rights[x])
+              change_points_demand.append(total_right_delivery)
+              change_points_buyout_demand.append(total_structure_deliveries)
+              change_points_buyout_purchase.append(0.0)
+              change_points_date.append(date_use)
+              change_points_right.append(sorted_priorities[x])
+              change_points_consumptive.append(sorted_returns[x])
+            if total_demand > total_physical_supply:
+              break
+        break
+
+    change_points_purchase_df = pd.DataFrame(columns = ['structure', 'demand', 'right', 'consumptive', 'date'])
+    change_points_buyout_df = pd.DataFrame(columns = ['structure', 'demand', 'demand_purchase', 'date'])
+    if len(change_points_right) > 0:  
+      all_sorted_order = np.argsort(np.asarray(change_points_right) * -1.0)
+      sorted_right_ids = np.asarray(change_points_right_id)[all_sorted_order]
+      sorted_structure_ids = np.asarray(change_points_structure)[all_sorted_order]
+      last_right = sorted_right_ids[-1]
+      last_structure = sorted_structure_ids[-1]
+    
+      change_points_purchase_df['structure'] = change_points_structure
+      change_points_purchase_df['demand'] = change_points_demand
+      change_points_purchase_df['right'] = change_points_right
+      change_points_purchase_df['consumptive'] = change_points_consumptive
+      change_points_purchase_df['date'] = change_points_date
+
+      change_points_buyout_df['structure'] = change_points_structure
+      change_points_buyout_df['demand'] = change_points_buyout_demand
+      change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
+      change_points_buyout_df['date'] = change_points_date
+    else:
+      last_right = ''
+      last_structure = ''
+    
+    return change_points_purchase_df, change_points_buyout_df, last_right, last_structure
+          
+  def check_purchases(self, change_points_purchase_1, structure_outflows, structure_outflows_old, downstream_data):
+    station_id_column_length = 12
+    station_id_column_start = 0
 
     for j in range(0,len(downstream_data)):
       if downstream_data[j][0] != '#':
         first_line = int(j * 1)
         break
+    running_purchases = 0.0
     for j in range(first_line, len(downstream_data)):
       station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
-      if station_id == res_station:
-        curr_position = 1
-      if 'Irrigation' in self.structures_objects[station_id].structure_types:
-        try:
-          for r_id in self.structures_objects[station_id].rights_list:
-            if station_id == '5100848':
-              print(len(available_purchases['demand']), end = " ")
-              print(station_id, end = " ")
-              print(r_id, end = " ")
-              print(self.structures_objects[station_id].rights_list)
-            available_purchases['demand'].append(self.structures_objects[station_id].rights_objects[r_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'])
-            available_purchases['priority'].append(self.structures_objects[station_id].rights_objects[r_id].priority)
-            available_purchases['right'].append(r_id)
-            available_purchases['structure'].append(station_id)
-            available_purchases['position'].append(curr_position)
-        except:
-          pass
-      if station_id == control_location:
-        break
-
-    for rt in purchase_types:
-      available_purchases[rt] = np.asarray(available_purchases[rt])
+      if station_id in list(change_points_purchase_1['structure'].astype(str)):
+        this_station_purchase = change_points_purchase_1[change_points_purchase_1['structure'].astype(str)==station_id]
+        running_purchases += np.sum(this_station_purchase['demand'])
     
-    sorted_order = np.argsort(available_purchases['priority'])
-    sorted_demand = available_purchases['demand'][sorted_order]
-    sorted_rights = available_purchases['right'][sorted_order]
-    sorted_structs = available_purchases['structure'][sorted_order]
-    sorted_position = available_purchases['position'][sorted_order]
-    
-    change_points_structure = []
-    change_points_demand = []
-    change_points_buyout_demand = []
-    change_points_buyout_purchase = []
-    change_points_date = []
-
-    total_demand = 0.0
-    toggle_exchange = 0
-    for x in range(1, len(sorted_demand)):
-      this_position = sorted_position[-1*x]
-      if this_position == 1:
-        total_demand += sorted_demand[-1*x]
-      if toggle_exchange == 0 or this_position == 0:
-        this_right = sorted_rights[-1*x]
-        this_structure = sorted_structs[-1*x]
-        total_right_delivery = self.structures_objects[this_structure].rights_objects[this_right].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
-        total_structure_demand = self.structures_objects[this_structure].adaptive_monthly_demand.loc[date_use, 'demand']
-        total_structure_deliveries = self.structures_objects[this_structure].adaptive_monthly_deliveries.loc[date_use, 'deliveries']
-        total_demand_reduction = max(total_structure_demand - total_structure_deliveries, 0.0)
-
-        if total_right_delivery > 0.0:
-          print(x, end = " ")
-          print(this_structure, end = " ")
-          print(sorted_structs[-1*x])        
-          change_points_structure.append(this_structure)
-          change_points_demand.append(total_right_delivery)
-          change_points_buyout_demand.append(total_structure_deliveries)
-          change_points_buyout_purchase.append(total_demand_reduction)
-          change_points_date.append(date_use)
-        if total_demand >= total_physical_supply:
-          last_right = sorted_rights[-1*x]
-          last_structure = sorted_structs[-1*x]
-          toggle_exchange = 1
-
-    if total_demand < total_physical_supply:
-      last_right = sorted_rights[0]
-      last_structure = sorted_structs[0]
-    print(len(available_purchases['structure']))
-    print(len(sorted_structs))
-    print(len(change_points_structure))
-    change_points_purchase_df = pd.DataFrame()
-    change_points_purchase_df['structure'] = change_points_structure
-    change_points_purchase_df['demand'] = change_points_demand
-    change_points_purchase_df['date'] = change_points_date
-
-    change_points_buyout_df = pd.DataFrame()
-    change_points_buyout_df['structure'] = change_points_structure
-    change_points_buyout_df['demand'] = change_points_buyout_demand
-    change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
-    change_points_buyout_df['date'] = change_points_date
-    
-
-    return change_points_purchase_df, change_points_buyout_df, last_right, last_structure
-          
-  
     
   def find_buyout_partners(self, last_right, last_structure, res_struct_id, date_use):
     
@@ -747,28 +1302,36 @@ class Basin():
     change_points_date = []
     
     sri = self.structures_objects[res_struct_id].sorted_rights[0]
-    initial_priority = self.structures_objects[last_structure].rights_objects[last_right].priority
+    use_buyouts = True
+    try:
+      initial_priority = self.structures_objects[last_structure].rights_objects[last_right].priority
+    except:
+      use_buyouts = False
     end_priority = self.structures_objects[res_struct_id].rights_objects[sri].priority
-    print(initial_priority, end = " ")
-    print(end_priority, end = " ")
-    print(last_structure)
-    for right_priority, right_id, struct_id in zip(self.rights_stack_priorities, self.rights_stack_ids, self.rights_stack_structure_ids):
-      if right_priority >= initial_priority and right_priority < end_priority:
-        total_demand_level = self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] * 1.0
-        total_extra_demand = max(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'] - self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
-        if total_extra_demand > 0.0:
-          change_points_structure.append(struct_id)
-          change_points_buyout_demand.append(total_demand_level)
-          change_points_buyout_purchase.append(total_extra_demand)
-          change_points_date.append(date_use)              
-                
-    change_points_buyout_df = pd.DataFrame()
-    change_points_buyout_df['structure'] = change_points_structure
-    change_points_buyout_df['demand'] = change_points_buyout_demand
-    change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
-    change_points_buyout_df['date'] = change_points_date
+    if use_buyouts:
+      for right_priority, right_id, struct_id in zip(self.rights_stack_priorities, self.rights_stack_ids, self.rights_stack_structure_ids):
+        if right_priority >= initial_priority and right_priority < end_priority:
+          total_decree = 0.0
+          for ind_right in self.structures_objects[struct_id].rights_list:
+            if self.structures_objects[struct_id].rights_objects[ind_right].priority < end_priority:
+              total_decree += self.structures_objects[struct_id].rights_objects[ind_right].decree_af
+          total_demand_level = self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] * 1.0
+          total_extra_demand = max(min(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'], total_decree) - self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
 
-    return change_points_buyout_df
+          if total_extra_demand > 0.0:
+            change_points_structure.append(struct_id)
+            change_points_buyout_demand.append(total_demand_level)
+            change_points_buyout_purchase.append(total_extra_demand)
+            change_points_date.append(date_use)              
+                
+    change_points_buyout_df = pd.DataFrame(columns = ['structure', 'demand', 'demand_purchase', 'date'])
+    if len(change_points_structure) > 0:
+      change_points_buyout_df['structure'] = change_points_structure
+      change_points_buyout_df['demand'] = change_points_buyout_demand
+      change_points_buyout_df['demand_purchase'] = change_points_buyout_purchase
+      change_points_buyout_df['date'] = change_points_date
+
+    return change_points_buyout_df, end_priority
                     
                           
   def read_rights_parameter_file(self):

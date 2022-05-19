@@ -99,7 +99,7 @@ class Structure():
       
     counter = 0
     for ind_right in self.sorted_rights:
-      self.rights_objects[ind_right].adaptive_monthly_demand[date_use, 'demand'] = rights_demands[counter]
+      self.rights_objects[ind_right].adaptive_monthly_deliveries[date_use, 'deliveries'] = rights_demands[counter]
       counter += 1
 
   
