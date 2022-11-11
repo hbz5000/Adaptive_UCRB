@@ -1,22 +1,11 @@
 import numpy as np 
 import matplotlib.pyplot as plt
 import pandas as pd
-from osgeo import gdal
-import rasterio
-from shapely.geometry import Point, Polygon, LineString
-from matplotlib.patches import Patch, Circle
+from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 import geopandas as gpd
-import fiona
-from matplotlib.colors import ListedColormap
-import matplotlib.pylab as pl
-from skimage import exposure
 import seaborn as sns
-import sys
-import scipy.stats as stats
-from datetime import datetime, timedelta
-import matplotlib.ticker as mtick
-import matplotlib.dates as mdates
+from datetime import datetime
 
 class Plotter():
 
@@ -36,1291 +25,196 @@ class Plotter():
       self.type = '2d'
     plt.tight_layout()
 
-  def plot_historical_exports(self, structure_deliveries, structure_deliveries_new, snowpack_data, structure_id, tunnel_name, start_year, end_year):
-  
-    month_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
-    color_list = sns.color_palette('RdBu', 10)
-    annual_deliveries = []
-    annual_deliveries_new = []
+  def set_plotting_color_palette(self):
+    #ensure plotting colors are consistent throughout plots
+    colors_use = sns.color_palette('rocket_r', 4)
+    color_use_value = {}
+    color_use_value['550'] = 3
+    color_use_value['600'] = 2
+    color_use_value['650'] = 1
+    color_use_value['700'] = 0
+    return colors_use, color_use_value
     
-    total_annual_deliveries = 0.0
-    for index, row in structure_deliveries.iterrows():
-      if index.year >= start_year and index.year <= end_year:
-        if index.month == 10 and total_annual_deliveries > 0.0:
-          annual_deliveries.append(total_annual_deliveries)
-          total_annual_deliveries = 0.0
-        if structure_id == '3604684':
-          total_annual_deliveries += (row[structure_id] + row['5104655'])/1000.0
-        else:
-          total_annual_deliveries += row[structure_id]/1000.0   
-        
-    annual_deliveries.append(total_annual_deliveries)        
-    annual_deliveries = np.asarray(annual_deliveries)
-
-    total_annual_deliveries = 0.0
-    for index, row in structure_deliveries_new.iterrows():
-      if index.year >= start_year and index.year <= end_year:
-        if index.month == 10 and total_annual_deliveries > 0.0:
-          annual_deliveries_new.append(total_annual_deliveries)
-          total_annual_deliveries = 0.0
-        if structure_id == '3604684':
-          total_annual_deliveries += (row[structure_id] + row['5104655'])/1000.0
-        else:
-          total_annual_deliveries += row[structure_id]/1000.0   
-    annual_deliveries_new.append(total_annual_deliveries)        
-    annual_deliveries_new = np.asarray(annual_deliveries_new)
-    max_delivery = max(np.max(annual_deliveries), np.max(annual_deliveries_new))
-    min_delivery = min(np.min(annual_deliveries), np.min(annual_deliveries_new))
-    range_use = max_delivery - min_delivery
-    pos = np.linspace(min_delivery, max_delivery, 101)
-    kde_est = stats.gaussian_kde(annual_deliveries)
-    kde_est2 = stats.gaussian_kde(annual_deliveries_new)
-    mean_pre = np.mean(annual_deliveries)
-    mean_post = np.mean(annual_deliveries_new)
-    self.ax[0].fill_between(pos, kde_est(pos), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[0].fill_between(pos, kde_est2(pos), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[0].fill_between(pos, kde_est(pos), edgecolor = 'black', alpha = 0.6, facecolor = 'purple')
-    self.ax[0].fill_between(pos, kde_est2(pos), edgecolor = 'black', alpha = 0.6, facecolor = 'forestgreen')
-    self.ax[0].fill_between([mean_pre - range_use * 0.0075, mean_pre + range_use * 0.0075], [0.0, 0.0], [np.max(kde_est(pos)), np.max(kde_est(pos))], linewidth = 3.0, edgecolor = 'black', facecolor = 'purple')
-    self.ax[0].fill_between([mean_post - range_use * 0.0075, mean_post + range_use * 0.0075], [0.0, 0.0], [np.max(kde_est2(pos)),np.max(kde_est2(pos))], linewidth = 3.0, edgecolor = 'black', facecolor = 'Forestgreen')
-    snowpack_vals = np.zeros(end_year - start_year + 1)
-    for yearnum in range(start_year, end_year + 1):
-      datetime_val = datetime(yearnum, 9, 1, 0, 0)
-      snowpack_vals[yearnum-start_year] = snowpack_data.loc[datetime_val, 'basinwide_average']
-    index_sort = np.argsort(snowpack_vals)
-    wet_years = []
-    normal_years = []
-    dry_years = []
-    num_vals = len(index_sort) / 3
-    counter = 0
-    counter_type = 0
-    for x in range(0, len(index_sort)):
-      index_use = index_sort[x]
-      if counter_type == 0:
-        dry_years.append(annual_deliveries_new[index_use] - annual_deliveries[index_use])
-      elif counter_type == 1:
-        normal_years.append(annual_deliveries_new[index_use] - annual_deliveries[index_use])
+  def plot_crop_types(self, filename, show_plot = False):
+    #figure 2 in the manuscript - crop prices vs. irrigated acreage within the UCRB
+    
+    #use irrigation shapefile to find total irrigated area of each crop within the UCRB
+    irrigation_ucrb = gpd.read_file(filename)
+    irrigation_ucrb = irrigation_ucrb.to_crs(epsg = 3857)
+    overall_crop_areas = {}
+    for index, row in irrigation_ucrb.iterrows():
+      #get total irrigated acreage (in thousand acres) for all listed crops
+      if row['CROP_TYPE'] in overall_crop_areas:
+        overall_crop_areas[row['CROP_TYPE']] += row['ACRES'] / 1000.0
       else:
-        wet_years.append(annual_deliveries_new[index_use] - annual_deliveries[index_use])
+        overall_crop_areas[row['CROP_TYPE']] = row['ACRES'] / 1000.0
+    #crop marginal net benefits ($/acre) come from enterpirse budget reports from the CSU ag extension
+    marginal_net_benefits = {}
+    marginal_net_benefits['VEGETABLES'] = 506.0
+    marginal_net_benefits['ALFALFA'] = 306.0
+    marginal_net_benefits['BARLEY'] = 401.0
+    marginal_net_benefits['BLUEGRASS'] = 401.0
+    marginal_net_benefits['CORN_GRAIN'] = 50.0
+    marginal_net_benefits['DRY_BEANS'] = 64.0
+    marginal_net_benefits['GRASS_PASTURE'] = 401.0
+    marginal_net_benefits['SOD_FARM'] = 401.0
+    marginal_net_benefits['SMALL_GRAINS'] = 401.0
+    marginal_net_benefits['SORGHUM_GRAIN'] = 401.0
+    marginal_net_benefits['WHEAT_FALL'] = 252.0
+    marginal_net_benefits['WHEAT_SPRING'] = 252.0
+    #et requirements come from .........
+    et_requirements = {}
+    effective_precip = 3.1
+    et_requirements['VEGETABLES'] = 26.2
+    et_requirements['ALFALFA'] = 36.0
+    et_requirements['BARLEY'] = 22.2
+    et_requirements['BLUEGRASS'] = 30.0
+    et_requirements['CORN_GRAIN'] = 26.9
+    et_requirements['DRY_BEANS'] = 18.1
+    et_requirements['GRASS_PASTURE'] = 30.0
+    et_requirements['SOD_FARM'] = 30.0
+    et_requirements['SMALL_GRAINS'] = 22.2
+    et_requirements['SORGHUM_GRAIN'] = 24.5
+    et_requirements['WHEAT_FALL'] = 16.1
+    et_requirements['WHEAT_SPRING'] = 16.1
+    et_requirements['ORCHARD_WITH_COVER'] = 22.2
+    et_requirements['ORCHARD_WO_COVER'] = 22.2
+    et_requirements['GRAPES'] = 22.2
+    #for perennial crops, consider the costs of replacing the tree/vine and how long it takes to return to full production
+    #these are revenues - costs for vineyards ($/acre) in each year, compared to a baseline
+    grapes_planting_costs = [-6385.0, -2599.0, -1869.0, 754.0, 2012.0, 2133.0, 2261.0] 
+    grapes_baseline_revenue = [2261.0, 2261.0, 2261.0, 2261.0, 2261.0, 2261.0, 2261.0]
+    total_npv_costs = 0.0
+    counter = 0
+    #discount cost/revenue by 2.5% per year to get a NPV cost
+    for cost, baseline in zip(grapes_planting_costs, grapes_baseline_revenue):
+      total_npv_costs +=  (baseline - cost)/np.power(1.025, counter)
       counter += 1
-      if counter > num_vals:
-        counter = 0
-        counter_type += 1
-    wet_years = np.asarray(wet_years)
-    normal_years = np.asarray(normal_years)
-    dry_years = np.asarray(dry_years)
-    max_delivery2 = max(max(np.max(wet_years), np.max(dry_years)), np.max(normal_years))
-    min_delivery2 = min(min(np.min(wet_years), np.min(dry_years)), np.min(normal_years))
-    range_use = max_delivery2 - min_delivery2
-    pos2 = np.linspace(min_delivery2, max_delivery2, 101)
-    kde_wet = stats.gaussian_kde(wet_years)
-    kde_normal = stats.gaussian_kde(normal_years)
-    kde_dry = stats.gaussian_kde(dry_years)
-    self.ax[1].fill_between(pos2, kde_wet(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[1].fill_between(pos2, kde_normal(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[1].fill_between(pos2, kde_dry(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[1].fill_between(pos2, kde_wet(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'steelblue')
-    self.ax[1].fill_between(pos2, kde_normal(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'beige')
-    self.ax[1].fill_between(pos2, kde_dry(pos2), edgecolor = 'black', alpha = 1.0, facecolor = 'indianred')
-    mean_wet = np.mean(wet_years)
-    mean_normal = np.mean(normal_years)
-    mean_dry = np.mean(dry_years)
-    self.ax[1].fill_between([mean_wet - range_use * 0.0075, mean_wet + range_use * 0.0075], [0.0, 0.0], [np.max(kde_wet(pos2)), np.max(kde_wet(pos2))], linewidth = 3.0, edgecolor = 'black', facecolor = 'steelblue')
-    self.ax[1].fill_between([mean_normal - range_use * 0.0075, mean_normal + range_use * 0.0075], [0.0, 0.0], [np.max(kde_normal(pos2)),np.max(kde_normal(pos2))], linewidth = 3.0, edgecolor = 'black', facecolor = 'beige')
-    self.ax[1].fill_between([mean_dry - range_use * 0.0075, mean_dry + range_use * 0.0075], [0.0, 0.0], [np.max(kde_dry(pos2)),np.max(kde_dry(pos2))], linewidth = 3.0, edgecolor = 'black', facecolor = 'indianred')
-    self.ax[0].set_yticks([])
-    self.ax[0].set_yticklabels('')
-    self.ax[1].set_yticks([])
-    self.ax[1].set_yticklabels('')
-    self.ax[0].set_ylabel('Probability', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[1].set_ylabel('Probability', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    if tunnel_name == 'Roberts':
-      self.ax[0].set_xlabel('Annual Exports, ' + tunnel_name + ' & Moffat Tunnel (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-      self.ax[1].set_xlabel('Change in Exports, ' + tunnel_name + ' & Moffat Tunnel (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    else:
-      self.ax[0].set_xlabel('Annual Exports, ' + tunnel_name + ' Tunnel (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-      self.ax[1].set_xlabel('Change in Exports, ' + tunnel_name + ' Tunnel (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    
-    legend_location = 'upper left'
-    legend_element = [Patch(facecolor='purple', edgecolor='black', alpha = 1., label='Historical Baseline'),
-                     Patch(facecolor='forestgreen', edgecolor='black', alpha = 1., label='Reservoir Re-operation'),
-                     Line2D([0], [0], color='black', lw = 4, label='Distribution Mean')]
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':18}
-    self.ax[0].legend(handles=legend_element, loc=legend_location, prop=legend_properties)
-    legend_element2 = [Patch(facecolor='indianred', edgecolor='black', alpha = 1., label='Dry Years'),
-                     Patch(facecolor='beige', edgecolor='black', alpha = 1., label='Normal Years'),
-                     Patch(facecolor='steelblue', edgecolor='black', alpha = 1., label='Wet Years'),
-                     Line2D([0], [0], color='black', lw = 4, label='Distribution Mean')]
-    self.ax[1].legend(handles=legend_element2, loc=legend_location, prop=legend_properties)
-    for x in range(0, 2):
-      for item in (self.ax[x].get_xticklabels()):
-        item.set_fontsize(18)
-    self.ax[0].set_xlim([min_delivery, max_delivery])
-    self.ax[1].set_xlim([min_delivery2, max_delivery2])
-    plt.tight_layout()
-    plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-
-  def plot_monthly_ranges(self):
-    for decile in range(0, 10):
-      bottom_line = np.zeros(12)
-      top_line = np.zeros(12)
-      for mn_cnt, mn in enumerate(month_list):
-        decile_index_bottom = int(float(len(monthly_deliveries[mn])) * float(decile)/10.0)
-        decile_index_top = int(float(len(monthly_deliveries[mn])) * float(decile + 1)/10.0)
-        if decile_index_top == len(monthly_deliveries[mn]):
-          decile_index_top -= 1
-        bottom_line[mn_cnt] = monthly_deliveries[mn][decile_index_bottom]
-        top_line[mn_cnt] = monthly_deliveries[mn][decile_index_top]
-      self.ax[1].fill_between(np.arange(len(month_list)), bottom_line, top_line, color = 'beige', alpha = 1.0)
-      self.ax[1].fill_between(np.arange(len(month_list)), bottom_line, top_line, color = color_list[decile], alpha = 0.7)
-
-  def plot_transfer_tradeoffs(self):
-    thresh_550 = pd.read_csv('all_changes_0.csv')
-    thresh_600 = pd.read_csv('all_changes_1.csv')
-    thresh_650 = pd.read_csv('all_changes_2.csv')
-    thresh_700 = pd.read_csv('all_changes_3.csv')
-
-    freq_550 = pd.read_csv('freq_changes_0.csv')
-    freq_600 = pd.read_csv('freq_changes_1.csv')
-    freq_650 = pd.read_csv('freq_changes_2.csv')
-    freq_700 = pd.read_csv('freq_changes_3.csv')
-    plot_labels = ['550', '600', '650', '700']
-    total_leases = np.zeros(4)
-    mf_impact = np.zeros(4)
-    other_impact = np.zeros(4)
-    freq_tot = np.zeros(4)
-    freq_mf = np.zeros(4)
-    freq_other = np.zeros(4)
-    x_cnt = 0
-    for lease_use, freq_use in zip([thresh_550, thresh_600, thresh_650, thresh_700], [freq_550, freq_600, freq_650, freq_700]):
-      total_leases[x_cnt] = lease_use.loc[0, '0']
-      mf_impact[x_cnt] = lease_use.loc[2, '0']
-      other_impact[x_cnt] = (lease_use.loc[1, '0'] + lease_use.loc[3, '0'])
-    
-      freq_tot[x_cnt] = freq_use.loc[0, '0']
-      freq_mf[x_cnt] = freq_use.loc[1, '0']
-      freq_other[x_cnt] = freq_use.loc[2, '0']
-      
-      x_cnt += 1
-    color_list = sns.color_palette('RdYlBu', 3)
-    self.ax.plot(freq_tot, total_leases, color = 'indianred', linewidth = 5.0, zorder = 2) 
-    self.ax.scatter(freq_tot, total_leases, c = 'indianred', s = 250, edgecolors = 'black', zorder = 10)
-    for fr, vol, lab in zip(freq_tot, total_leases, plot_labels):
-      if lab == '700':
-        self.ax.text(fr + np.max(freq_tot) * 0.075, vol - 0.05 * np.max(total_leases), 'Contract\nTrigger:\n' + lab + ' tAF', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT',verticalalignment='center',
-            horizontalalignment='center', zorder = 20)
-      else:
-        self.ax.text(fr - np.max(freq_tot) * 0.075, vol + 0.05 * np.max(total_leases), 'Contract\nTrigger:\n' + lab + ' tAF', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT',verticalalignment='center',
-            horizontalalignment='center', zorder = 20)
-
-    self.ax.plot(freq_mf, mf_impact, color = 'steelblue', linewidth = 5.0, zorder = 2) 
-    self.ax.scatter(freq_mf, mf_impact, c = 'steelblue', s = 250, edgecolors = 'black', zorder = 10) 
-
-    self.ax.plot(freq_other, other_impact, color = 'forestgreen', linewidth = 5.0, zorder = 2) 
-    self.ax.scatter(freq_other, other_impact, c = 'forestgreen', s = 250, edgecolors = 'black', zorder = 10) 
-
-    legend_location = 'upper left'
-    legend_element = [Patch(facecolor='indianred', edgecolor='black', label='Transbasin Diversion'),
-                     Patch(facecolor='steelblue', edgecolor='black', label='Minimum Flow Impacts'),
-                     Patch(facecolor='forestgreen', edgecolor='black', label='Other Third Parties')]
-    self.ax.plot([0, 10], [0.0, 0.0], color = 'black', linewidth = 2.0, zorder = 1)       
-    self.ax.set_xlim([0,10])    
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':24}
-    self.ax.legend(handles=legend_element, loc=legend_location, prop=legend_properties, ncol = 1)
-    self.ax.set_ylabel('Total Diversion Change (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_xlabel('Impact Frequency (maximum per 10-year period)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(20)
-    for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(20)
-    plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-
-  def plot_buyout_mitigation(self, station_no, baseline_revenues, annual_water_index, start_year, buyout_price):
-    print(baseline_revenues)
-    mitigation_dict = {}
-    exclusive_mitigation = {}
-    color_list = sns.color_palette('rocket', 4)
-    for s_cnt, folder_name in enumerate(['550', '600', '650', '700']):
-      mitigation_dict[folder_name] = np.zeros(len(baseline_revenues))
-      exclusive_mitigation[folder_name] = {}
-      exclusive_mitigation[folder_name]['buyout'] = []
-      exclusive_mitigation[folder_name]['shortfall'] = []
-      structure_buyouts = pd.read_csv('results_' + folder_name + '/buyouts_2_5104055.csv')
-      structure_buyouts['datetime'] = pd.to_datetime(structure_buyouts['date'])
-      this_station_buyouts = structure_buyouts[structure_buyouts['structure'] == station_no]
-      this_station_buyouts = this_station_buyouts.drop_duplicates(subset = 'datetime')
-      for index, row in this_station_buyouts.iterrows():
-        mitigation_dict[folder_name][row['datetime'].year - start_year] += row['demand_purchase'] * buyout_price / 1000000.0
-        print(folder_name, end = " ")
-        print(row['datetime'].year - start_year, end = " ")
-        print(row['demand_purchase'], end = " ")
-        print(row['demand_purchase'] * buyout_price / 1000000.0, end = " ")
-        print(mitigation_dict[folder_name][row['datetime'].year - start_year])
-    exclusive_mitigation['none'] = {}  
-    exclusive_mitigation['none']['buyout'] = []  
-    exclusive_mitigation['none']['shortfall'] = []  
-    for year_num in range(0, len(baseline_revenues)):
-      no_buyout = True
-      for folder_name in ['550', '600', '650', '700']:
-        if no_buyout:
-          if mitigation_dict[folder_name][year_num] > 0.0:
-            exclusive_mitigation[folder_name]['buyout'].append(mitigation_dict[folder_name][year_num])
-            exclusive_mitigation[folder_name]['shortfall'].append(baseline_revenues[year_num]/1000000.0)
-            no_buyout = False
-      if no_buyout:
-        exclusive_mitigation['none']['buyout'].append(0.0)
-        exclusive_mitigation['none']['shortfall'].append(baseline_revenues[year_num]/1000000.0)
-        
-    for folder_name, color_count in zip(['700', '650', '600', '550'], [3, 2, 1, 0]):
-      self.ax.scatter(exclusive_mitigation[folder_name]['shortfall'], exclusive_mitigation[folder_name]['buyout'], c = color_list[color_count], s = 250, edgecolors = 'black', linewidths = 1.0, clip_on = False, zorder = 10)
-    self.ax.scatter(exclusive_mitigation['none']['shortfall'], exclusive_mitigation['none']['buyout'], c = 'none', s = 250, edgecolors = 'black', linewidths = 2.0, zorder = 1)
-    
-    legend_location = 'upper left'
-    legend_element = [Line2D([0], [0], color='white', marker = 'o', markerfacecolor = color_list[0], markeredgecolor = 'black', markersize = 25, label='550 tAF Threshold'),
-                      Line2D([0], [0], color='white', marker = 'o', markerfacecolor = color_list[1], markeredgecolor = 'black', markersize = 25,  label='600 tAF Threshold'),
-                      Line2D([0], [0], color='white', marker = 'o', markerfacecolor = color_list[2], markeredgecolor = 'black', markersize = 25,  label='650 tAF Threshold'),
-                      Line2D([0], [0], color='white', marker = 'o', markerfacecolor = color_list[3], markeredgecolor = 'black', markersize = 25,  label='700 tAF Threshold'),
-                      Line2D([0], [0], color='white', marker = 'o', markerfacecolor = 'white', markeredgecolor = 'black', markersize = 25,  label='No Buyout')]
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':20}
-    self.ax.legend(handles=legend_element, loc=legend_location, prop=legend_properties)
-    self.ax.set_xlabel('Revenue Shortfalls ($MM)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_ylabel('Buyout Payments ($MM)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_xlim([np.min(baseline_revenues) * 0.9/ 1000000.0, np.max(baseline_revenues) * 1.1/1000000.0])
-    for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(20)
-      item.set_fontname('Gill Sans MT')
-    for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(20)
-      item.set_fontname('Gill Sans MT')
-    plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    
-  def plot_structure_changes_by_wyt(self, structures_objects, downstream_data, plot_type, axis_breaks, structure_use_list, name_use_list, purchase_transfers = 'none', buyout_transfers = 'none', purchase_list = 'none', buyouts_list = 'none', show_partners = 'all', iteration_no = 3):
-    station_id_column_length = 12
-    station_id_column_start = 0
-    location_name = []
-    label_name = []
-    label_name_2 = {}
-    total_diversions = 0.0
-    irr_tp = 0.0
-    mf_tp = 0.0
-    muni_tp = 0.0
-    min_change = 0.0
-    max_change = 0.0
-    color_list = sns.color_palette('rocket', 4)
-    for x, y in zip(structure_use_list, name_use_list):
-      label_name_2[x] = y
-    
-    for j in range(0,len(downstream_data)):
-      if downstream_data[j][0] != '#':
-        first_line = int(j * 1)
-        break
-    cumulative_change = 0.0
-    counter1 = len(downstream_data)
-    total_payments = np.zeros(len(downstream_data))
-    for j in range(first_line, len(downstream_data)):
-      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
-      if station_id == '70_ADC050':
-        label_name.append('Cameo')
-        location_name.append(counter1)
-      elif station_id == '5104055':
-        label_name.append('Lake Granby')
-        location_name.append(counter1)
-      elif station_id == '5300584':
-        label_name.append('Shoshone')
-        location_name.append(counter1)
-      if station_id in structures_objects:
-        this_structure_filled = structures_objects[station_id].baseline_filled
-        change_in_delivery = structures_objects[station_id].average_change[plot_type]
-        printed_value = change_in_delivery * 1.0
-          
-        if this_structure_filled > 0.0:
-          use_column = True
-          if 'Irrigation' in structures_objects[station_id].structure_types:
-            color_use = 'forestgreen'
-          elif 'Minimum Flow' in structures_objects[station_id].structure_types:        
-            color_use = 'steelblue'
-          elif 'Export' in structures_objects[station_id].structure_types:
-            color_use = 'indianred'
-          elif 'Municipal' in structures_objects[station_id].structure_types:
-            color_use = 'goldenrod'
-          else:
-            use_column = False
-          if use_column:
-            if station_id in structure_use_list:
-              total_diversions += change_in_delivery
-            elif station_id in purchase_list:
-              skip_list = True
-            elif color_use == 'forestgreen':
-              irr_tp += change_in_delivery
-            elif color_use == 'steelblue':
-              mf_tp += change_in_delivery
-            elif color_use == 'indianred' or color_use == 'goldenrod':
-              muni_tp += change_in_delivery
-            #for ab, ax_loc in zip([plot_type + '_1', plot_type + '_2'], [10.0, 6.25]):
-              #if change_in_delivery - axis_breaks[ab] > ax_loc:
-                #change_in_delivery -= axis_breaks[ab]
-                #break
-            if show_partners == 'all':  
-              self.ax[1].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-
-              self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_use, alpha = 1.0, linewidth = 2.0)
-              counter1 -= 1
-              if station_id in structure_use_list:
-                if change_in_delivery < 0.0:
-                  self.ax[0].text(counter1 - 5, change_in_delivery + 2.5, label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-                else:
-                  self.ax[0].text(counter1 - 5, min(change_in_delivery + 1.5, 12.0), label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-
-            elif show_partners == 'revenue':
-              if station_id in purchase_list or station_id in structure_use_list:
-                skipthis = True
-                self.ax[2].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-              else:
-                self.ax[2].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-                self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_list[iteration_no], alpha = 1.0, linewidth = 2.0)
-                min_change = min(min_change, change_in_delivery)
-                max_change = max(max_change, change_in_delivery)
-                
-                purchases = purchase_transfers[purchase_transfers['structure'] == station_id]
-                buyouts = buyout_transfers[buyout_transfers['structure'] == station_id]
-                buyouts = buyouts.drop_duplicates(subset = 'datetime')
-                for index, row in purchases.iterrows():
-                  for xxx in range(0, counter1):              
-                    total_payments[xxx] += row['demand'] * row['consumptive'] * structures_objects[station_id].purchase_price / 1000000.0
-                for index, row in buyouts.iterrows():               
-                  for xxx in range(0, counter1):              
-                    total_payments[xxx] += row['demand_purchase'] * 10.0 / 1000000.0
-                #if change_in_delivery < -10.0 and iteration_no == 3:
-                  #self.ax[0].text(counter1 - 6, change_in_delivery + 2.5, str(station_id) + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-              counter1 -= 1
-            elif station_id in purchase_list or station_id in buyouts_list:
-              if show_partners == 'partners':
-                self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_use, alpha = 1.0, linewidth = 2.0)
-                self.ax[1].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-              
-              if station_id in structure_use_list:
-                self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_use, alpha = 1.0, linewidth = 2.0)
-                self.ax[1].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-                if change_in_delivery < 0.0:
-                  self.ax[0].text(counter1 - 6, change_in_delivery + 2.5, label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-                else:
-                  self.ax[0].text(counter1 - 6, min(change_in_delivery + 1.5, 12.0), label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-              counter1 -= 1
-            else:
-              if show_partners == 'thirdparty':
-                self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_use, alpha = 1.0, linewidth = 2.0)
-                self.ax[1].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-              if station_id in structure_use_list:
-                self.ax[0].fill_between([counter1-1, counter1], [0.0, 0.0], [change_in_delivery, change_in_delivery], color = color_use, alpha = 1.0, linewidth = 2.0)
-                self.ax[1].fill_between([counter1-1, counter1], [0.0, 0.0], [this_structure_filled, this_structure_filled], color = color_use, alpha = 1.0, linewidth = 0.0)
-                if change_in_delivery < 0.0:
-                  self.ax[0].text(counter1 - 6, change_in_delivery + 2.5, label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-                else:
-                  self.ax[0].text(counter1 - 6, min(change_in_delivery + 1.5, 12.0), label_name_2[station_id] + '\n' + str(int(printed_value)) + ' tAF', horizontalalignment='right', verticalalignment='top',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-              counter1 -= 1
-    if show_partners == 'revenue':
-      self.ax[1].fill_between(np.arange(len(downstream_data)),np.zeros(len(downstream_data)), total_payments, facecolor = 'beige', alpha = 1.0, linewidth = 2.0)
-      self.ax[1].fill_between(np.arange(len(downstream_data)),np.zeros(len(downstream_data)), total_payments, facecolor = color_list[iteration_no], edgecolor = 'black', alpha = 0.8, linewidth = 2.5)
-      self.ax[0].text((len(downstream_data) - counter1) * 0.66 + counter1, -40, 'Minimum Flow\nColorado River', horizontalalignment='center', verticalalignment='center',fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-      
-    for l_name, label_loc in zip(label_name, location_name):
-      self.ax[2].scatter([label_loc,], [0.0,], c = 'black', s = 25)
-      self.ax[2].text(label_loc, -0.1, l_name, horizontalalignment='center', verticalalignment='center', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    for x in range(0, 3):
-      self.ax[x].set_xticks([])
-      self.ax[x].set_xticklabels('')
-      self.ax[x].set_xlim([counter1, len(downstream_data)])
-    self.ax[0].set_ylabel('Third-Party\nImpacts\n(tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    if show_partners == 'revenue':
-      self.ax[1].set_ylabel('Buyout\nPayments\n($MM)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-      if iteration_no == 3:
-        self.ax[1].set_ylim([0.0, np.max(total_payments) * 1.1])
-        self.ax[0].set_ylim([min_change * 1.1, max_change * 1.1])
-      self.ax[2].set_ylabel('In-Priority\nDemands (%)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-      self.ax[2].set_ylim([0.0, 1.0])
-      self.ax[2].yaxis.set_major_formatter(mtick.PercentFormatter(xmax = 1.0, decimals = None))
-    else:
-      self.ax[1].set_ylabel('In-Priority\nDemands (%)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-      self.ax[1].set_ylim([0.0, 1.0])
-      self.ax[1].yaxis.set_major_formatter(mtick.PercentFormatter(xmax = 1.0, decimals = None))
-      self.ax[0].set_yticks([-30.0, -20.0, -10.0, 0.0, 10.0])
-      self.ax[0].set_ylim([-32.0, 12.0])
-    legend_location = 'lower right'
-    legend_element = [Patch(facecolor='forestgreen', edgecolor='black', label='Irrigation'),
-                     Patch(facecolor='steelblue', edgecolor='black', label='Min Flow'),
-                     Patch(facecolor='indianred', edgecolor='black', label='Export'),
-                     Patch(facecolor='goldenrod', edgecolor='black', label='M&I')]
-    legend_location2 = 'upper right'
-    legend_element2 = [Patch(facecolor=color_list[0], edgecolor='black', label='550 tAF Threshold'),
-                     Patch(facecolor=color_list[1], edgecolor='black', label='600 tAF Threshold'),
-                     Patch(facecolor=color_list[2], edgecolor='black', label='650 tAF Threshold'),
-                     Patch(facecolor=color_list[3], edgecolor='black', label='700 tAF Threshold')]
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':20}
-    self.ax[2].legend(handles=legend_element, loc=legend_location, prop=legend_properties, ncol = 4)
-    self.ax[1].legend(handles=legend_element2, loc=legend_location2, prop=legend_properties, ncol = 2)
-    self.ax[0].legend(handles=legend_element2, loc='lower left', prop=legend_properties, ncol = 2)
-    self.ax[0].plot([0, counter1], [0.0, 0.0], color = 'black', linewidth = 0.5)
-    #self.ax[0].set_yticklabels(['-5.0', '-2.5', '0.0', '2.5', str(min(axis_breaks[plot_type + '_1'], axis_breaks[plot_type + '_2']) + 6.25), str(max(axis_breaks[plot_type + '_1'], axis_breaks[plot_type + '_2']) + 10.)])
-    tradeoff_df = pd.DataFrame(np.asarray([total_diversions, irr_tp, mf_tp, muni_tp]))
-    tradeoff_df.to_csv('all_changes_' + str(iteration_no) + '.csv')
-    for x in range(0,3):
-      for item in (self.ax[x].get_yticklabels()):
-        item.set_fontsize(18)
-    if iteration_no == 0:
-      plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-
-  def plot_simple_risk(self, animation_pane):
-    export_diversions = pd.read_csv('input_files/total_export_deliveries.csv')
-    total_exports = np.asarray(export_diversions['3604684_baseline'] + export_diversions['5104655_baseline'])
-    if animation_pane < 2:
-      min_val = np.min(total_exports)
-      max_val = np.max(total_exports)
-      range_val = max_val - min_val
-      pos = np.linspace(min_val, max_val, 101)
-      kde_export = stats.gaussian_kde(total_exports)
-      pos2 = np.linspace(min_val, 110.0, 101)
-      pos3 = np.linspace(110.0, max_val, 101)
-      total_shortfall_years = np.sum(total_exports < 110.0) / float(len(total_exports))
-      print(total_shortfall_years)
-    if animation_pane >= 2:
-      financial_risk = np.zeros(len(total_exports))
-      for x in range(0, len(total_exports)):
-        financial_risk[x] = (max(110.0 - total_exports[x], 0.0) * (1.612 - .38))
-      financial_risk = np.asarray(financial_risk)
-      min_val = np.min(financial_risk)
-      max_val = np.max(financial_risk)
-      range_val = max_val - min_val
-      if animation_pane == 2:
-        pos = np.linspace(min_val, max_val, 101)
-        kde_export = stats.gaussian_kde(financial_risk)
-      elif animation_pane == 3:
-        sorted_risk = np.sort(financial_risk)
-        five_percent = sorted_risk[len(sorted_risk) - int(0.05 * len(sorted_risk))]
-        pos = np.linspace(min_val, max_val, 101)
-        pos2 = np.linspace(min_val, five_percent, 101)
-        pos3 = np.linspace(five_percent, max_val, 101)
-        kde_export = stats.gaussian_kde(financial_risk)
-        
-    self.ax.fill_between(pos, kde_export(pos), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'beige')
-    if animation_pane == 0:
-      self.ax.fill_between(pos, kde_export(pos), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'steelblue')
-      y_lab = 'Annual Transbasin Diversions, Denver Water (tAF)'
-    elif animation_pane == 1:
-      self.ax.fill_between(pos2, kde_export(pos2), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'indianred')
-      self.ax.fill_between(pos3, kde_export(pos3), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'steelblue')
-      y_lab = 'Annual Transbasin Diversions, Denver Water (tAF)'
-    elif animation_pane == 2:
-      self.ax.fill_between(pos, kde_export(pos), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'steelblue')
-      y_lab = 'Lost Revenue, Denver Water ($M)'
-    elif animation_pane == 3:
-      self.ax.fill_between(pos2, kde_export(pos2), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'steelblue')
-      self.ax.fill_between(pos3, kde_export(pos3), edgecolor = 'black', linewidth = 3.0, alpha = 1.0, facecolor = 'indianred')
-      self.ax.plot([five_percent, five_percent], [0.0, np.max(kde_export(pos))], linewidth = 3.0, linestyle = '--', color = 'black')
-      print(five_percent)
-      y_lab = 'Lost Revenue, Denver Water ($M)'
-    
-
-    self.ax.set_yticks([])
-    self.ax.set_yticklabels('')
-    self.ax.set_ylabel('Probability', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_xlabel(y_lab, fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_xlim([min_val, max_val])
-    self.ax.set_ylim([0.0,np.max(kde_export(pos))])
-    for item in (self.ax.get_xticklabels() + self.ax.get_xticklabels()):
-      item.set_fontsize(28)
-      item.set_fontname('Gill Sans MT')
-    if animation_pane == 1:
-      legend_location = 'upper left'
-      legend_element = [Patch(facecolor='steelblue', edgecolor='black', label='No Shortfall Years'),
-                     Patch(facecolor='indianred', edgecolor='black', label='Shortfall Years')]
-      legend_properties = {'family':'Gill Sans MT','weight':'bold','size':28}
-      self.ax.legend(handles=legend_element, loc=legend_location, prop=legend_properties)
-    if animation_pane == 3:
-      legend_location = 'upper right'
-      legend_element = [Patch(facecolor='indianred', edgecolor='black', label='Worst 5% Years')]
-      legend_properties = {'family':'Gill Sans MT','weight':'bold','size':28}
-      self.ax.legend(handles=legend_element, loc=legend_location, prop=legend_properties)
-    
-    plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-
-  def plot_cost_per_af(self, cost_per_af, total_exports, iteration_no, color_map, xlimit):
-    #rpp = [22.12, 20.25, 10.0 ,32.5, 46.5, 81.0, 126.0, 160.5]
-    #year_rpp = [2010, 2011, 2012, 2015, 2016, 2017, 2018, 2019]
-    rpp = pd.read_csv('input_files/northern_regional_pool.csv')
-    color_list = sns.color_palette(color_map, 4)
-    volume_weighted_dist = []
-    min_val = np.min(cost_per_af)
-    max_val = np.max(cost_per_af)
-    pos = np.linspace(np.min(cost_per_af), min(np.max(cost_per_af),xlimit), 101)
-    for cost_af, ex_inc in zip(cost_per_af, total_exports):
-      for x in range(0, int(ex_inc/100.0)):
-        volume_weighted_dist.append(cost_af)
-    volume_weighted_dist = np.asarray(volume_weighted_dist)
-    kde_weighted_cost = stats.gaussian_kde(volume_weighted_dist)
-    self.ax.fill_between(pos, kde_weighted_cost(pos), edgecolor = 'black', linewidth = 3.0, alpha = 0.9, facecolor = color_list[iteration_no])
-    
-#    for yearnum in range(2010, 2020):
-#      this_year_rpp = rpp[rpp['year'] == yearnum]
-#      if len(this_year_rpp) > 1:
-#        min_val = np.min(this_year_rpp['bid'])
-#        max_val = np.max(this_year_rpp['bid'])
-#        for index_rpp, row_rpp in this_year_rpp.iterrows():
-#          self.ax.plot([row_rpp['bid'], row_rpp['bid']], [0.0, np.max(kde_weighted_cost(pos))* 1.1], linewidth = 3.0, color = color_list[yearnum - 2010])
-    
-    self.ax.set_yticks([])
-    self.ax.set_yticklabels('')
-    self.ax.set_ylabel('Probability', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_xlabel('Transfer Price ($/AF)', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
-    legend_location2 = 'upper right'
-    if color_map == 'rocket':
-      legend_element2 = [Patch(facecolor=color_list[0], edgecolor='black', label='550 tAF Threshold'),
-                       Patch(facecolor=color_list[1], edgecolor='black', label='600 tAF Threshold'),
-                       Patch(facecolor=color_list[2], edgecolor='black', label='650 tAF Threshold'),
-                       Patch(facecolor=color_list[3], edgecolor='black', label='700 tAF Threshold')]
-    else:
-      legend_element2 = [Patch(facecolor=color_list[0], edgecolor='black', label='Lease 1.5x, Buyout $20/AF'),
-                       Patch(facecolor=color_list[1], edgecolor='black', label='Lease 2.5x, Buyout $20/AF'),
-                       Patch(facecolor=color_list[2], edgecolor='black', label='Lease 1.5x, Buyout $40/AF'),
-                       Patch(facecolor=color_list[3], edgecolor='black', label='Lease 2.5x, Buyout $40/AF')]
-
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':24}
-    self.ax.legend(handles=legend_element2, loc=legend_location2, prop=legend_properties, ncol = 1)
-    
- #   self.fig.subplots_adjust(right=0.9)
- #   cbar_ax = self.fig.add_axes([0.9187, 0.15, 0.025, 0.7])
- #   sm = plt.cm.ScalarMappable(cmap='RdYlBu_r', norm=plt.Normalize(vmin=2010, vmax=2019))
- #   clb1 = plt.colorbar(sm, cax = cbar_ax, ticks=[2010, 2013, 2016, 2019])
- #   clb1.ax.set_yticklabels(['2010', '2013', '2016', '2019']) 
- #   clb1.ax.invert_yaxis()
- #   clb1.ax.tick_params(labelsize=20)
- #  clb1.ax.set_ylabel('Regional Pool Bids', rotation=90, fontsize = 24, fontname = 'Gill Sans MT', fontweight = 'bold', labelpad = 15)
- #   for item in clb1.ax.yaxis.get_ticklabels():
- #     item.set_fontname('Gill Sans MT')  
- #     item.set_fontsize(20)
-    self.ax.set_xlim([0.0, xlimit])
-    
-    for item in (self.ax.get_xticklabels() + self.ax.get_yticklabels()):
-      item.set_fontsize(20)
-      item.set_fontname('Gill Sans MT')
-    if color_map == 'rocket':
-      if iteration_no == 3:
-        self.ax.set_ylim([0.0, np.max(kde_weighted_cost(pos)) * 1.1])
-      if iteration_no == 1:
-        plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    else:
-      if iteration_no == 0:
-        self.ax.set_ylim([0.0, np.max(kde_weighted_cost(pos)) * 1.1])
-      if iteration_no == 3:
-        plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-        
-  def plot_structure_changes(self, percent_filled, downstream_data, buyout_list, purchase_list):
-    
-    sorted_changes = percent_filled.sort_values(by=['pct_filled_baseline'])
-    #self.ax.fill_between(np.arange(len(sorted_changes['pct_filled_baseline'])), np.zeros(len(sorted_changes['pct_filled_baseline'])), sorted_changes['pct_filled_baseline'], color = 'black', alpha = 0.4) 
-    counter_deliveries = 0.0
-    #for index, row in sorted_changes.iterrows():
-      #if row['change'] > 0.0:
-        #if row['structure_name'] == '5104634':
-          #self.ax.fill_between([counter_deliveries, counter_deliveries + 1], np.zeros(2), [row['change'], row['change']], color = 'forestgreen', alpha = 1.0, linewidth = 0.0)
-          #counter_deliveries += 1
-      #elif row['change'] < 0.0:
-        #if row['structure_name'] == '5104634':
-          #self.ax.fill_between([counter_deliveries, counter_deliveries + 1], [row['change'], row['change']], np.zeros(2), color = 'forestgreen', alpha = 1.0, linewidth = 0.0)
-          #counter_deliveries += 1
-    counter1 = 0
-    station_id_column_length = 12
-    station_id_column_start = 0
-    location_name = []
-    label_name = []
-    for j in range(0,len(downstream_data)):
-      if downstream_data[j][0] != '#':
-        first_line = int(j * 1)
-        break
-    cumulative_change = 0.0
-    for j in range(first_line, len(downstream_data)):
-      station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
-      if station_id == '70_ADC050':
-        label_name.append('Cameo')
-        location_name.append(counter1)
-      elif station_id == '5104055':
-        label_name.append('Lake Granby')
-        location_name.append(counter1)
-      elif station_id == '5300584':
-        label_name.append('Shoshone')
-        location_name.append(counter1)
-      
-      this_structure_filled = percent_filled[percent_filled['structure_name'] == station_id]
-      for index, row in this_structure_filled.iterrows():
-        use_column = True
-        if row['structure_types'] == 'Irrigation':
-          color_use = 'forestgreen'
-        elif row['structure_types'] == 'Minimum Flow':        
-          color_use = 'steelblue'
-        elif row['structure_types'] == 'Export':
-          color_use = 'indianred'
-        elif row['structure_types'] == 'Municipal':
-          color_use = 'goldenrod'
-        else:
-          use_column = False
-        if use_column:
-          if row['pct_filled_baseline'] > 0.0:
-            print(counter1, end = " ")
-            print(row['structure_name'], end = " ")
-            print(row['structure_types'], end = " ")
-            print(row['pct_filled_baseline'], end =  " ")            
-            self.ax[0].fill_between([0.0, row['pct_filled_baseline']], [counter1, counter1], [counter1 + 1, counter1 + 1], color = color_use, alpha = 1.0, linewidth = 0.0)
-            n_count_1 = 0
-            n_count_2 = 0
-            n_count_3 = 0
-            p_count_1 = 0
-            p_count_2 = 0
-            p_count_3 = 0
-            for x in range(0, 10):
-              try:
-                print(int(row['change_' + str(x)]/100.0)/10.0, end = " ")
-              except:
-                pass
-              try:
-                if row['cum_change_pos' + str(x)] > 0.0:
-                  self.ax[2].fill_between([0.0, row['cum_change_pos' + str(x)]/1000.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0, linewidth = 0.0)
-                  self.ax[2].fill_between([0.0, row['cum_change_pos' + str(x)]/1000.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'sienna', alpha = max(min(float(p_count_1+1) / 10.0, 1.0), 0.0), linewidth = 0.0)
-                  p_count_1 += 1
-              except:
-                pass
-              try:
-                if row['cum_change_neg' + str(x)] < 0.0:
-                  self.ax[2].fill_between([row['cum_change_neg' + str(x)]/1000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0, linewidth = 0.0)
-                  self.ax[2].fill_between([row['cum_change_neg' + str(x)]/1000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'sienna', alpha = max(min(float(n_count_1+1) / 10.0, 1.0), 0.0), linewidth = 0.0)
-                  n_count_1 += 1
-              except:
-                pass
-              try:
-                if row['change_' + str(x)] < 0.0:
-                  self.ax[1].fill_between([row['change_' + str(x)]/1000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0)
-                  self.ax[1].fill_between([row['change_' + str(x)]/1000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = color_use, alpha = max(min(float(n_count_2+1) / 10.0, 1.0), 0.0))
-                  n_count_2 += 1
-              except:
-                pass
-              try:
-                if row['revenue_' + str(x)] < 0.0:
-                  self.ax[3].fill_between([row['revenue_' + str(x)]/1000000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0)
-                  self.ax[3].fill_between([row['revenue_' + str(x)]/1000000.0, 0.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = color_use, alpha = max(min(float(n_count_3+1) / 10.0, 1.0), 0.0))
-                  n_count_3 += 1
-              except:
-                pass
-            for x in range(9, -1, -1):
-              try:                 
-                if row['change_' + str(x)] > 0.0:
-                  self.ax[1].fill_between([0.0, row['change_' + str(x)]/1000.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0, linewidth = 0.0)
-                  self.ax[1].fill_between([0.0, row['change_' + str(x)]/1000.0], [counter1, counter1], [counter1 + 1, counter1 + 1], color = color_use, alpha = max(min(float(p_count_2+1) / 10.0, 1.0), 0.0))
-                  p_count_2 += 1
-              except:
-                pass
-              try:                 
-                if row['revenue_' + str(x)] > 0.0:
-                  if row['revenue_' + str(x)] > 25000000:
-                    value_use = (row['revenue_' + str(x)] - 50000000)/1000000.0
-                  else:
-                    value_use = row['revenue_' + str(x)]/1000000.0
-                  
-                  self.ax[3].fill_between([0.0, value_use], [counter1, counter1], [counter1 + 1, counter1 + 1], color = 'beige', alpha = 1.0, linewidth = 0.0)
-                  self.ax[3].fill_between([0.0, value_use], [counter1, counter1], [counter1 + 1, counter1 + 1], color = color_use, alpha = max(min(float(p_count_3+1) / 10.0, 1.0), 0.0))
-                  p_count_3 += 1
-              except:
-                pass
-            counter1 += 1
-            print()
-    for l_name, label_loc in zip(label_name, location_name):
-      self.ax[0].scatter([0.0,], [label_loc,], c = 'black', s = 25)
-      self.ax[0].text(-0.05, label_loc,l_name, horizontalalignment='right', verticalalignment='center', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    for x in range(0, 4):
-      self.ax[x].set_yticks([])
-      self.ax[x].set_yticklabels('')
-      self.ax[x].set_ylim([0, counter1])
-    self.ax[0].set_xlabel('Percent Historical\nDemands Met', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[1].set_xlabel('Structure Diversion\nChange (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[2].set_xlabel('Cumulative Diversion\nChange (tAF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[3].set_xlabel('Revenue Change\n($MM)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    #self.ax[0][0].set_ylim([-100000.0, 200000.0])
-    #self.ax[1][0].set_ylim([-100000.0, 200000.0])
-    #self.ax[0][1].set_ylim([-100000.0, 200000.0])
-    #self.ax[1][1].set_ylim([-100000.0, 200000.0])
-    
-    #self.ax[0][0].set_xticks([])
-    #self.ax[0][0].set_xticklabels('')
-    #self.ax[0][1].set_xticks([])
-    #self.ax[0][1].set_xticklabels('')
-    #self.ax[1][1].set_yticks([])
-    #self.ax[1][1].set_yticklabels('')
-    #self.ax[0][1].set_yticks([])
-    #self.ax[0][1].set_yticklabels('')
-    
-    #self.ax[0][0].set_ylabel('Average Annual Revenue Change ($/AF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    #self.ax[1][0].set_ylabel('Average Annual Revenue Change ($/AF)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    #self.ax[1][0].set_xlabel('Average Annual Change\nin Water Use (AF/year)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    #self.ax[1][1].set_xlabel('Average Annual Change\nin Water Use (AF/year)', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT')
-    legend_location = 'lower right'
-    #legend_location_alt = 'upper right'
-    legend_element = [Patch(facecolor='forestgreen', edgecolor='black', label='Irrigation'),
-                     Patch(facecolor='steelblue', edgecolor='black', label='Min Flow'),
-                     Patch(facecolor='indianred', edgecolor='black', label='Export'),
-                     Patch(facecolor='goldenrod', edgecolor='black', label='M&I')]
-    #legend_element2 = [Patch(facecolor='indianred', edgecolor='black', label='Purchase Partners')]
-    #legend_element3 = [Patch(facecolor='steelblue', edgecolor='black', label='Buyout Partners')]
-    #legend_element4 = [Patch(facecolor='black', edgecolor='black', label='Uninvolved Parties')]
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':14}
-    self.ax[3].legend(handles=legend_element, loc=legend_location, prop=legend_properties)
-    
-    legend_location2 = 'lower left'
-    #legend_location_alt = 'upper right'
-    legend_element2 = [Patch(facecolor='sienna', edgecolor='black', alpha = 0.1, label='2% Prob.'),
-                     Patch(facecolor='sienna', edgecolor='black', alpha = 0.3, label='6% Prob.'),
-                     Patch(facecolor='sienna', edgecolor='black', alpha = 0.5, label='10% Prob.'),
-                     Patch(facecolor='sienna', edgecolor='black', alpha = 1.0, label='20% Prob.')]
-    #legend_element2 = [Patch(facecolor='indianred', edgecolor='black', label='Purchase Partners')]
-    #legend_element3 = [Patch(facecolor='steelblue', edgecolor='black', label='Buyout Partners')]
-    #legend_element4 = [Patch(facecolor='black', edgecolor='black', label='Uninvolved Parties')]
-    legend_properties = {'family':'Gill Sans MT','weight':'bold','size':14}
-    self.ax[2].legend(handles=legend_element2, loc=legend_location2, prop=legend_properties)
-    for x in range(1, 4):
-      self.ax[x].plot([0.0, 0.0], [0, counter1], color = 'black', linewidth = 0.5)
-    #self.ax[0][1].legend(handles=legend_element2, loc=legend_location, prop=legend_properties)
-    #self.ax[1][0].legend(handles=legend_element3, loc=legend_location, prop=legend_properties)
-    #self.ax[1][1].legend(handles=legend_element4, loc=legend_location, prop=legend_properties)
-    #for x in range(0,2):
-      #for y in range(0,2):
-        #self.ax[x][y].plot(np.zeros(2), [-100000.0, 200000.0], color = 'black', linestyle = '--', linewidth = 2.0)
-        #self.ax[x][y].plot([-250000.0, 500000.0], np.zeros(2), color = 'black', linestyle = '--', linewidth = 2.0)
-        #self.ax[x][y].set_xlim([-1500, 500])
-        #for item in (self.ax[x][y].get_xticklabels()):
-          #item.set_fontsize(16)
-        #for item in (self.ax[x][y].get_yticklabels()):
-          #item.set_fontsize(16)
-
-    plt.savefig('Shapefiles_UCRB/' + self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    plt.show()
-    
-  def plot_informal_purchases(self, station_id):
-    purchased_water = pd.read_csv('results/change_points1_' + station_id +'.csv', index_col = 0)
-    purchased_water = purchased_water.drop_duplicates()
-    buyout_water = pd.read_csv('results/change_points2_' + station_id +'.csv', index_col = 0)
-    buyout_water = buyout_water.drop_duplicates()
-    structure_purchase_list = {}
-    structure_buyout_list = {}
-    prev_demand = 0.0
-    prev_date = datetime(1950, 1, 1, 0, 0)
-    start_year = 1950
-    date_index = []
-
-    for year in range(1950, 2014):
-      for month in range(1, 13):
-        date_index.append(datetime(year, month, 1, 0, 0))
-    informal_transfer = pd.DataFrame(index = date_index, columns = ['purchased', 'buyouts', 'cumulative_purchase', 'cumulative_buyout'])
-    informal_transfer['purchased'] = np.zeros(len(date_index))
-    informal_transfer['buyouts'] = np.zeros(len(date_index))
-    informal_transfer['cumulative_purchase'] = np.zeros(len(date_index))
-    informal_transfer['cumulative_buyout'] = np.zeros(len(date_index))
-
-    total_date_purchase = 0.0
-    for index, row in purchased_water.iterrows():
-      if row['month'] < 3:
-        date_val = datetime(row['year'], row['month'] + 10, 1, 0, 0)
-      else:
-        date_val = datetime(row['year'], row['month'] - 2, 1, 0, 0)
-      if date_val > prev_date:
-        informal_transfer.loc[prev_date, 'purchased'] = total_date_purchase
-        prev_demand = 0.0
-        total_date_purchase = 0.0
-        if row['month'] < 3:
-          prev_date = datetime(row['year'], row['month'] + 10, 1, 0, 0)
-        else:
-          prev_date = datetime(row['year'], row['month'] - 2, 1, 0, 0)
-
-      if row['demand'] > prev_demand:
-        if row['structure'] in structure_purchase_list:
-          structure_purchase_list[row['structure']].append(row['delivery'] - prev_demand)
-        else:
-          structure_purchase_list[row['structure']] = []
-          structure_purchase_list[row['structure']].append(row['delivery'] - prev_demand)
-        total_date_purchase += row['delivery']
-        prev_demand = row['demand'] * 1.0
-
-    total_date_buyout = 0.0
-    prev_date = datetime(1950, 1, 1, 0, 0)
-    for index, row in buyout_water.iterrows():
-      if row['month'] < 3:
-        date_val = datetime(row['year'], row['month'] + 10, 1, 0, 0)
-      else:
-        date_val = datetime(row['year'], row['month'] - 2, 1, 0, 0)
-      
-      if date_val > prev_date:
-        informal_transfer.loc[prev_date, 'buyouts'] = total_date_buyout
-        prev_demand = 0.0
-        total_date_buyout = 0.0
-        if row['month'] < 3:
-          prev_date = datetime(row['year'], row['month'] + 10, 1, 0, 0)
-        else:
-          prev_date = datetime(row['year'], row['month'] - 2, 1, 0, 0)
-
-      if row['demand'] > 0.0:
-        if row['structure'] in structure_buyout_list:
-          structure_buyout_list[row['structure']].append(row['demand'])
-        else:
-          structure_buyout_list[row['structure']] = []
-          structure_buyout_list[row['structure']].append(row['demand'])
-        total_date_buyout += row['delivery']
-    informal_transfer.to_csv('results/timeseries_informal_transfer.csv')
-    prev_purchase = 0.0
-    prev_buyouts = 0.0
-    for index, row in informal_transfer.iterrows():
-      if row['purchased'] > 0.0:
-        informal_transfer.loc[index, 'cumulative_purchase'] = prev_purchase + row['purchased']
-        prev_purchase += row['purchased']
-      else:
-        prev_purhcase = 0.0
-      if row['buyouts'] > 0.0:
-        informal_transfer.loc[index, 'cumulative_buyouts'] = prev_buyouts + row['buyouts']
-        prev_buyouts += row['buyouts']
-      else:
-        prev_buyouts = 0.0
-      
-    return informal_transfer, structure_purchase_list, structure_buyout_list
-  def plot_cost_distribution(self, res_station, simulated_values, simulated_values2, informal_transfer):
-    cost_list = []
-    total_volume = []
-    for index, row in informal_transfer.iterrows():
-      total_cost = row['buyouts'] * 25.0 + row['purchased'] * 200.0
-      total_benefit = simulated_values2.loc[index, res_station + '_diversions'] - simulated_values.loc[index, res_station + '_diversions']
-      if index.year > 2012:
-        break
-      if total_benefit > 0.0 and pd.notna(total_benefit) and total_cost > 0.0:
-        print(total_benefit, end = " ")
-        print(total_cost, end = " ")
-        print(float(total_cost/total_benefit))
-        for xx in range(0, int(total_benefit/100.0)):
-          cost_list.append(float(total_cost/total_benefit))
-        total_volume.append(total_benefit)
-    #cost_list = np.asarray(cost_list)
-    #total_volume = np.asarray(total_volume)
-    #cumulative_volume = np.zeros(len(total_volume))
-    #sorted_order = np.argsort(cost_list)
-    #sorted_cost = cost_list[sorted_order]
-    #sorted_volume = total_volume[sorted_order]
-    #cv = 0.0
-    #for x in range(0, len(total_volume)):
-      #cv += sorted_volume[x]
-      #cumulative_volume[x] = cv * 1.0
-    
-    pos = np.linspace(0, 2000.0, 101)
-    kde_est = stats.gaussian_kde(cost_list)
-    self.ax.set_xlim([0, 2000.0])
-    self.ax.set_ylim([0, 0.0008])
-
-    self.ax.fill_between(pos, kde_est(pos), edgecolor = 'black', alpha = 0.6, facecolor = 'steelblue')
-    #self.ax.fill_between(pos[:25], kde_est(pos[:25]), edgecolor = 'black', alpha = 1.0, facecolor = 'indianred')
-    self.ax.set_yticks([])
-    self.ax.set_yticklabels('')
-    self.ax.set_xlabel('Total Informal Transfer Cost ($/AF)', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    
-    for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(16)
-      item.set_fontname('Gill Sans MT')
-    
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    plt.close()
-    
-    
-  def plot_reservoir_figures(self, historical_values, simulated_values, simulated_values2, reservoir_names,informal_transfer):
+    marginal_net_benefits['GRAPES'] = total_npv_costs
+    #these are revenues - costs for a typical fruit orchard (peaches are used here) - considers a 20-year life cycle for trees, and assume fallow of 10-year old trees
+    #(i.e., compare the NPV of fallowing now vs. fallowing in 10 years)
+    orchard_planting_costs = [-5183.0, -2802.0, -2802.0, 395.0, 5496.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0] 
+    orchard_baseline_revenue = [9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, 9398.0, -5183.0, -2802.0, -2802.0, 395.0, 5496.0]
+    total_npv_costs = 0.0
     counter = 0
-      #self.ax[axis_plot].fill_between(informal_transfer.index, np.zeros(len(informal_transfer.index)), informal_transfer['purchased'] / 1000.0, color = 'darkorange', alpha = 1.0)
-      #self.ax[axis_plot].fill_between(informal_transfer.index, informal_transfer['purchased'] / 1000.0, (informal_transfer['buyouts'] + informal_transfer['purchased'])  / 1000.0, color = 'indianred', alpha = 1.0)
-    self.ax.bar(informal_transfer.index, (informal_transfer['buyouts'] + informal_transfer['purchased'])  / 1000.0, width = 15.0, color = 'indianred', alpha = 1.0)
-    self.ax.bar(informal_transfer.index, informal_transfer['purchased'] / 1000.0, width = 15.0, color = 'darkorange', alpha = 1.0)
-    for x, res_name in zip(historical_values, [reservoir_names,]):
-      self.ax.bar(simulated_values2.index, (simulated_values2[x + '_diversions'] - simulated_values[x + '_diversions'])/1000.0, width = 15.0, color = 'teal', alpha = 1.0)
-    self.ax.set_ylabel('Informal Transfers (tAF)', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(16)
-      item.set_fontname('Gill Sans MT')
-    for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(16)
-      item.set_fontname('Gill Sans MT')
-
-    self.ax.set_xlim([datetime(1977, 3, 15, 0, 0), datetime(1977, 8, 15, 0, 0)])
-    self.ax.set_ylim([0, 100])
-     
+    #calculate difference in NPV across the entire cycle (6 years for grapes, 15 year for peaches)
+    for cost, baseline in zip(orchard_planting_costs, orchard_baseline_revenue):
+      total_npv_costs +=  (baseline - cost)/np.power(1.025, counter)
+      counter += 1
+    marginal_net_benefits['ORCHARD_WITH_COVER'] = total_npv_costs
+    marginal_net_benefits['ORCHARD_WO_COVER'] = total_npv_costs
     
-    
-    #self.ax.legend(['Reservoir Storage', 'Snowpack Storage'])
-    legend_elements = [Patch(facecolor='teal', edgecolor='black', label='Additional Transbasin Diversions', alpha = 0.7), 
-                      Patch(facecolor='darkorange', edgecolor='black', label='Informal Transfer Purchases', alpha = 0.7), 
-                      Patch(facecolor='indianred', edgecolor='black', label='Informal Transfer Buyouts', alpha = 0.7)]
-                      
-    self.ax.legend(handles=legend_elements, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':14}, framealpha = 1.0, ncol = 2)      
-    self.ax.xaxis.set_major_locator(mdates.MonthLocator())
-    self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %Y'))
-
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    plt.close()
-    
-  def plot_reservoir_simulation(self, simulated_values, total_diversions, res_use, div_use, account_plot_order):
+    #sort crops from highest cost to lowest cost
+    water_costs = np.zeros(len(marginal_net_benefits))
+    crop_list = []
     counter = 0
-    qalycolors = sns.color_palette('gnuplot_r', 5)
-    total_storage = np.zeros(len(simulated_values[res_use]))
-    for account_num in account_plot_order:
-      self.ax[0].fill_between(simulated_values.index, total_storage, total_storage + simulated_values[res_use + '_account_' + account_num]/1000.0, color = qalycolors[int(account_num)], alpha = 0.7, linewidth = 0.0)
-      total_storage += simulated_values[res_use + '_account_' + account_num]/1000.0
-    self.ax[1].plot(simulated_values.index, simulated_values[res_use + '_account_1']/1000.0, color = 'steelblue', zorder = 1)
-    
-    total_div_sum = 0.0
-    annual_index = []
-    annual_diversions = []
-    for x in range(0, len(total_diversions.index)):
-      if total_diversions.index[x].month == 10:
-        total_div_sum = total_diversions.loc[total_diversions.index[x], div_use]
-      else:
-        total_div_sum += total_diversions.loc[total_diversions.index[x], div_use]
-      if total_diversions.index[x].month == 9:
-        annual_index.append(total_diversions.index[x])
-        annual_diversions.append(total_div_sum)
-        
-    annual_diversions = np.asarray(annual_diversions)
-    annual_index = np.asarray(annual_index)
-    self.ax[1].bar(annual_index, annual_diversions/1000.0, width=np.timedelta64(180, 'D'), color = 'indianred', alpha = 0.7, zorder = 2)
-    recent_years = annual_index > datetime(1949, 10, 1, 0, 0)
-    annual_average = np.mean(annual_diversions[recent_years])/1000.0
-    self.ax[1].plot([datetime(1949, 10, 1, 0, 0), simulated_values.index[-1]], [annual_average, annual_average], linewidth = 2.0, color = 'indianred')
-    self.ax[0].set_xlim([datetime(1949, 10, 1, 0, 0), simulated_values.index[-1]])
-    self.ax[1].set_xlim([datetime(1949, 10, 1, 0, 0), simulated_values.index[-1]])
-    self.ax[0].set_ylim([0, 650])
-    self.ax[1].set_ylim([0, 550])
-    self.ax[0].set_ylabel('Account Storage\n(tAF)', fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[1].set_ylabel('CBT Supplies\n(tAF)', fontsize = 14, weight = 'bold', fontname = 'Gill Sans MT')
-    legend_elements = [Patch(facecolor=qalycolors[1], edgecolor='black', label='CBT', alpha = 0.7), 
-                      Patch(facecolor=qalycolors[2], edgecolor='black', label='Dead Pool', alpha = 0.7), 
-                      Patch(facecolor=qalycolors[3], edgecolor='black', label='Instream Flow', alpha = 0.7)]
-    self.ax[0].legend(handles=legend_elements, loc='upper right', prop={'family':'Gill Sans MT','weight':'bold','size':8}, framealpha = 1.0, ncol = 3)
-    legend_elements = [Line2D([0], [0], color='indianred', lw = 2, label='Diversions'),
-                       Line2D([0], [0], color='steelblue', lw = 2, label='Storage')]
-    self.ax[1].legend(handles=legend_elements, loc='upper right', prop={'family':'Gill Sans MT','weight':'bold','size':8}, framealpha = 1.0, ncol = 2)      
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    plt.close()
-    
-    
-  def plot_release_simulation(self, release_data, snowpack_data, res_station, year_start, year_end, show_plot = False):
-    qalycolors = sns.color_palette('gnuplot_r', 12)
-    flow1 = {}
-    flow2 = {}
-    flow3 = {}
-    snowpack = {}
-    for x in range(0, 12):
-      flow1[x] = []
-      flow2[x] = []
-      flow3[x] = []
-      snowpack[x] = []
+    for x in marginal_net_benefits:
+      #MNB = $/ac; et = AF/ac; MNB/et = $/AF
+      water_costs[counter] = marginal_net_benefits[x] / (et_requirements[x] / 12.0)#et is ac-in, divide by 12 for ac-ft
+      crop_list.append(x)
+      counter += 1
+    #sort crops by $/AF
+    sorted_index = np.argsort(water_costs*(-1.0))
+    crop_list_new = np.asarray(crop_list)
+    sorted_crops = crop_list_new[sorted_index]
+
+    running_area = 0.0#total crop acreage across all crop types
+    for x in sorted_crops:
+      # $/AF of fallowing for current crop type
+      total_cost = marginal_net_benefits[x] / (et_requirements[x] / 12.0)
       
-    for year_num in range(year_start, year_end):
-      year_add = 0
-      month_start = 10
-      for month_num in range(0, 12):
-        if month_start + month_num == 13:
-          month_start -= 12
-          year_add = 1
-        datetime_val = datetime(year_num + year_add, month_start + month_num, 1, 0, 0)
-        remaining_flow = 0.0
-        remaining_usable_flow = 0.0
-        remaining_diverted_flow = 0.0
-        current_snowpack = snowpack_data.loc[datetime_val, 'basinwide_average']
-        snowpack[month_num].append(current_snowpack)
-        for lookahead_month in range(month_num, 12):
-          if lookahead_month > 2:
-            lookahead_datetime = datetime(year_num + 1, lookahead_month - 2, 1, 0, 0)
-          else:
-            lookahead_datetime = datetime(year_num, lookahead_month + 10, 1, 0, 0)
-          remaining_flow += release_data.loc[lookahead_datetime, res_station + '_flow']
-          remaining_usable_flow += release_data.loc[lookahead_datetime, res_station + '_diverted'] + release_data.loc[lookahead_datetime, res_station + '_available']
-          remaining_diverted_flow += release_data.loc[lookahead_datetime, res_station + '_diverted']
-        flow1[month_num].append(remaining_flow)
-        flow2[month_num].append(remaining_usable_flow)
-        flow3[month_num].append(remaining_diverted_flow)
-        self.ax[0].scatter([current_snowpack,], [remaining_flow/1000.0,], color = qalycolors[month_num], s = 20)
-        self.ax[1].scatter([current_snowpack,], [remaining_usable_flow/1000.0,], color = qalycolors[month_num], s = 20)
-        self.ax[2].scatter([current_snowpack,], [remaining_diverted_flow/1000.0,], color = qalycolors[month_num], s = 20)
-    coef = np.zeros((12,2))
-    value_range = np.zeros((12,2))
-    coef2 = np.zeros((12,2))
-    coef3 = np.zeros((12,2))
-    for x in range(0, 12):
-      coef[x,:] = np.polyfit(np.asarray(snowpack[x]), np.asarray(flow1[x]), 1)
-      coef2[x,:] = np.polyfit(np.asarray(snowpack[x]), np.asarray(flow2[x]), 1)
-      coef3[x,:] = np.polyfit(np.asarray(snowpack[x]), np.asarray(flow3[x]), 1)
+      #add in line break so peaches ($6000/AF) and grapes ($10000/AF) are on the same plot as annual crops
+      if total_cost > 10000.0:
+        total_cost = 700.0 + (total_cost - 10000.0)/5.0
+      elif total_cost > 5500.0:
+        total_cost = 400.0 + (total_cost - 5500.0)/5.0
       
-      simulated_residuals1 = np.zeros(len(snowpack[x]))
-      simulated_residuals2 = np.zeros(len(snowpack[x]))
-      simulated_residuals3 = np.zeros(len(snowpack[x]))
-      for xx in range(0, len(snowpack[x])):
-        simulated_residuals1[xx] = 100.0*(snowpack[x][xx] * coef[x,0] + coef[x, 1] - flow1[x][xx])/flow1[x][xx]
-        simulated_residuals2[xx] = 100.0*(snowpack[x][xx] * coef2[x,0] + coef2[x, 1] - flow2[x][xx])/flow2[x][xx]
-        simulated_residuals3[xx] = 100.0*(snowpack[x][xx] * coef3[x,0] + coef3[x, 1] - flow3[x][xx])/flow3[x][xx]
-      
-      value_range[x, 0] = np.min(np.asarray(snowpack[x]))
-      value_range[x, 1] = np.max(np.asarray(snowpack[x]))
-      
-      estimate_small = (coef[x,0] * value_range[x, 0] + coef[x, 1])/1000.0
-      estimate_large = (coef[x,0] * value_range[x, 1] + coef[x, 1])/1000.0
-      estimate_small2 = (coef2[x,0] * value_range[x, 0] + coef2[x, 1])/1000.0
-      estimate_large2 = (coef2[x,0] * value_range[x, 1] + coef2[x, 1])/1000.0
-      estimate_small3 = (coef3[x,0] * value_range[x, 0] + coef3[x, 1])/1000.0
-      estimate_large3 = (coef3[x,0] * value_range[x, 1] + coef3[x, 1])/1000.0
-      
-      self.ax[0].plot([value_range[x, 0], value_range[x, 1]], [estimate_small, estimate_large], linewidth = 3, color = qalycolors[x])
-      self.ax[1].plot([value_range[x, 0], value_range[x, 1]], [estimate_small2, estimate_large2], linewidth = 3, color = qalycolors[x])
-      self.ax[2].plot([value_range[x, 0], value_range[x, 1]], [estimate_small3, estimate_large3], linewidth = 3, color = qalycolors[x])
-      
-    self.ax[0].set_xlim([0.0, max(snowpack_data['basinwide_average'])])
-    self.ax[1].set_xlim([0.0, max(snowpack_data['basinwide_average'])])
-    self.ax[2].set_xlim([0.0, max(snowpack_data['basinwide_average'])])
-    self.ax[0].set_ylim([0.0, max(flow1[0])/1000.0])
-    self.ax[1].set_ylim([0.0, max(flow2[0])/1000.0])
-    self.ax[2].set_ylim([0.0, max(flow3[0])/1000.0])
-    self.ax[2].set_xlabel('Fraction of Average Annual Snowpack Accumulation', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
-    month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
-    self.ax[0].set_xticks([])
-    self.ax[0].set_xticklabels('')
-    self.ax[1].set_xticks([])
-    self.ax[1].set_xticklabels('')
-    self.ax[0].set_ylabel('Total Inflow\n(tAF)', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[1].set_ylabel('Total Available Inflow\n(tAF)', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax[2].set_ylabel('Total Diversions\n(tAF)', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
-    
-    #Plot colorbar
-    self.fig.subplots_adjust(right=0.9)
-    cbar_ax = self.fig.add_axes([0.9187, 0.15, 0.025, 0.7])
-    sm = plt.cm.ScalarMappable(cmap='gnuplot_r', norm=plt.Normalize(vmin=0, vmax=11))
-    clb1 = plt.colorbar(sm, cax = cbar_ax, ticks=np.arange(0,12))
-    clb1.ax.set_yticklabels(month_index) 
-    #clb1.ax.invert_yaxis()
-    clb1.ax.tick_params(labelsize=16)
-    for item in clb1.ax.xaxis.get_ticklabels():
-      item.set_fontname('Gill Sans MT')  
-    for item in (self.ax[2].get_xticklabels()):
-      item.set_fontsize(14)
+      #acreage irrigated for this crop type      
+      total_area = overall_crop_areas[x]
+      #plot value per acre foot vs. cumulative acreage, with crops ordered from highest value crop to lowest value crop
+      self.ax.fill_between([running_area, running_area + total_area], np.zeros(2), [total_cost, total_cost], facecolor = 'indianred', edgecolor = 'black', linewidth = 2.0)
+      running_area += total_area
+
+    #format plot
+    self.ax.set_yticks([0.0, 100.0, 200.0, 400.0, 500.0, 700.0, 800.00])
+    self.ax.set_yticklabels(['$0', '$100', '$200', '$5500', '$6000', '$10000', '$10500'])
+    self.ax.set_ylabel('Cost of Fallowing per AF', fontsize = 42, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.set_xlabel('UCRB Irrigation (thousand acres)', fontsize = 42, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.set_ylim([0.0, 850.0])
+    self.ax.set_xlim([-2.5, running_area * 1.05])
+    for item in (self.ax.get_xticklabels()):
+      item.set_fontsize(32)
       item.set_fontname('Gill Sans MT')
     for axesnum in range(0, 3):
-      for item in (self.ax[axesnum].get_yticklabels()):
-        item.set_fontsize(14)
+      for item in (self.ax.get_yticklabels()):
+        item.set_fontsize(32)
         item.set_fontname('Gill Sans MT')
 
     plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
     if show_plot:
       plt.show()
     plt.close()
-    
-  def plot_release_simulation_controlled(self, release_data, snowpack_data, res_station, tot_coef, year_start, year_end, show_plot = False):
-  
-    monthly_control = {}
-    monthly_control_int = {}
-    list_num_dict = {}
+
+  def plot_available_water(self, tunnel_deliveries, storage_series, control_series, snowpack_data, snow_coefs, tunnel_station, reservoir_station, show_plot = False):
+    #figure 3 in the manuscript - water supply index as a function of storage, tunnel exports, and snowpack flow equivalents
+    #get index over historical simulation period
     month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
-    for x in range(1, 13):
-      monthly_control[x] = []
-      monthly_control_int[x] = []
-    for index, row in release_data.iterrows():
-      if index > datetime(1950, 10, 1, 0, 0):
-        this_row_month = index.month
-        monthly_control_int[this_row_month].append(row[res_station + '_location'])
-    
-    prev_cnt = 0
-    for x in range(1,13):
-      total_list = list(set(monthly_control_int[x]))
-      monthly_control[x] = []
-      for cont_loc in total_list:
-        num_obs = 0
-        for all_loc in monthly_control_int[x]:
-          if all_loc == cont_loc:
-            num_obs += 1
-
-        if num_obs > 10:
-          monthly_control[x].append(cont_loc)
-      this_cnt = 0   
-      for control_loc in monthly_control[x]:
-        if control_loc not in list_num_dict:
-          list_num_dict[control_loc] = this_cnt + prev_cnt
-          this_cnt += 1
-      prev_cnt += this_cnt
-    
-    plot_counter_x = 0
-    plot_counter_y = 0
-    num_x = 3
-    num_y = 4 
-    months_plot = ['FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL']
-    plot_x = 3
-    plot_y = 2
-    coef = {}
-    max_remaining_flow = 0.0
-    qalycolors = sns.color_palette('gnuplot_r', prev_cnt)
-    for month_num in range(0, 12):
-      year_add = 0
-      month_start = 10
-      if month_start + month_num > 12:
-        month_start = -2
-        year_add = 1
-
-      control_location_list = monthly_control[month_start + month_num]
-      flow2 = {}
-      snowpack = {}
-      for x in control_location_list:
-        flow2[x] = []
-        snowpack[x] = []
-
-      for year_num in range(year_start, year_end):
-        datetime_val = datetime(year_num + year_add, month_start + month_num, 1, 0, 0)
-        remaining_usable_flow = 0.0
-        current_snowpack = snowpack_data.loc[datetime_val, 'basinwide_average']
-        control_location = release_data.loc[datetime_val, res_station + '_location']
-        
-        for lookahead_month in range(month_num, 12):
-          if lookahead_month > 2:
-            lookahead_datetime = datetime(year_num + 1, lookahead_month - 2, 1, 0, 0)
-          else:
-            lookahead_datetime = datetime(year_num, lookahead_month + 10, 1, 0, 0)
-          remaining_usable_flow += release_data.loc[lookahead_datetime, res_station + '_diverted'] + release_data.loc[lookahead_datetime, res_station + '_available']
-        max_remaining_flow = max(max_remaining_flow, remaining_usable_flow)
-        if control_location in flow2:
-          snowpack[control_location].append(current_snowpack)
-          flow2[control_location].append(remaining_usable_flow)
-          color_number = list_num_dict[control_location]
-        #  self.ax[plot_counter_x][plot_counter_y].scatter([current_snowpack,], [remaining_usable_flow/1000.0,], c = [qalycolors[color_number],], s = 100)
-        #  self.ax[plot_counter_x][plot_counter_y].scatter([current_snowpack,], [remaining_usable_flow/1000.0,], c = 'lightslategray', s = 100)
-        #else:
-        if month_index[month_num] in months_plot:
-          self.ax[plot_counter_x][plot_counter_y].scatter([current_snowpack,], [remaining_usable_flow/1000.0,], c = 'indianred', edgecolor = 'black', s = 250)
-                
-      coef[month_index[month_num]] = {}
-      for cnt_x, control_loc in enumerate(control_location_list):        
-        coef[month_index[month_num]][control_loc] = np.polyfit(np.asarray(snowpack[control_loc]), np.asarray(flow2[control_loc]), 1)
-      
-        value_range = np.zeros(2)
-        value_range[0] = np.min(np.asarray(snowpack[control_loc]))
-        value_range[1] = np.max(np.asarray(snowpack[control_loc]))
-        estimate_small = (coef[month_index[month_num]][control_loc][0] * value_range[0] + coef[month_index[month_num]][control_loc][1])/1000.0
-        estimate_large = (coef[month_index[month_num]][control_loc][0] * value_range[1] + coef[month_index[month_num]][control_loc][1])/1000.0
-      
-        color_number = list_num_dict[control_loc]
-        #self.ax[plot_counter_x][plot_counter_y].plot([value_range[0], value_range[1]], [estimate_small, estimate_large], linewidth = 3, color = qalycolors[color_number])
-
-      value_range = np.zeros(2)
-      use_snowpack = snowpack_data[snowpack_data.index > datetime(year_start, 10, 1, 0, 0)]
-      value_range[0] = np.min(use_snowpack['basinwide_average'])
-      value_range[1] = np.max(use_snowpack['basinwide_average'])
-      estimate_small = (tot_coef[month_num, 0] * value_range[0] + tot_coef[month_num, 1])/1000.0
-      estimate_large = (tot_coef[month_num, 0] * value_range[1] + tot_coef[month_num, 1])/1000.0
-      if month_index[month_num] in months_plot:
-        self.ax[plot_counter_x][plot_counter_y].plot([value_range[0], value_range[1]], [estimate_small, estimate_large], linewidth = 5, color = 'indianred')
-
-      
-      ele_list = []
-      #for cl in control_location_list:
-        #color_number = list_num_dict[cl]
-        #ele_list.append(Line2D([0], [0], markerfacecolor=qalycolors[color_number], markeredgecolor='black',  lw = 0, marker = 'o', markersize = 25, label=cl))
-      ele_list.append(Line2D([0], [0], color='indianred', lw =5, label='Historical Trend'))
-      if month_index[month_num] in months_plot:
-        if plot_counter_y == 0 and plot_counter_x == 1:
-          self.ax[plot_counter_x][plot_counter_y].set_ylabel('Remaining Available Water, (tAF)', fontsize = 50, weight = 'bold', fontname = 'Gill Sans MT')
-        if plot_counter_y == 0:
-          for item in (self.ax[plot_counter_x][plot_counter_y].get_yticklabels()):
-            item.set_fontsize(20)
-            item.set_fontname('Gill Sans MT')
+    colors_use, colors_use_vals = self.set_plotting_color_palette()
+    already_diverted = 0.0
+    #historical simulation period is the index of input dataframes
+    diversion_vol = []
+    storage_vol = []
+    snowpack_vol = []
+    plot_index = []
+    #for each timestep, calculate the index componenets
+    counter = 0
+    for index, row in tunnel_deliveries.iterrows():
+      if index.year >= 1950:
+        if index.month == 10:
+          already_diverted = 0.0
+        already_diverted += tunnel_deliveries.loc[index, tunnel_station] / 1000.0#tunnel exports (taf)
+        available_storage = storage_series.loc[index, reservoir_station] / 1000.0#storage (taf)
+        control_location = control_series.loc[index, reservoir_station + '_location']#get river call location to determine snow/flow relationship
+        #get month to determine snow/flow relationship
+        if index.month > 9:
+          month_val = month_index[index.month - 10]
         else:
-          self.ax[plot_counter_x][plot_counter_y].set_yticks([])
-          self.ax[plot_counter_x][plot_counter_y].set_yticklabels('')
-        if plot_counter_x == (plot_x - 1):
-          self.ax[plot_counter_x][plot_counter_y].set_xlabel('Snowpack Frac', fontsize = 35, weight = 'bold', fontname = 'Gill Sans MT')
-          for item in (self.ax[plot_counter_x][plot_counter_y].get_xticklabels()):
-            item.set_fontsize(20)
-            item.set_fontname('Gill Sans MT')
-        else:
-          self.ax[plot_counter_x][plot_counter_y].set_xticks([])
-          self.ax[plot_counter_x][plot_counter_y].set_xticklabels('')
-        #if plot_counter_x == 0:
-          #self.ax[plot_counter_x][plot_counter_y].text(0.65, 0.7, month_index[month_num], horizontalalignment='center', verticalalignment='center', transform=self.ax[plot_counter_x][plot_counter_y].transAxes, fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-        #else:
-        self.ax[plot_counter_x][plot_counter_y].text(0.2, 0.85, month_index[month_num], horizontalalignment='center', verticalalignment='center', transform=self.ax[plot_counter_x][plot_counter_y].transAxes, fontsize = 26, weight = 'bold', fontname = 'Gill Sans MT')
-        if plot_counter_x == (plot_x - 1) and plot_counter_y == (plot_y - 1):
-          self.ax[plot_counter_x][plot_counter_y].legend(handles=ele_list, loc='upper right', prop={'family':'Gill Sans MT','weight':'bold','size':24}, framealpha = 1.0, ncol = 1)      
-        plot_counter_y += 1
-        if plot_counter_y == plot_y:
-          plot_counter_x += 1
-          plot_counter_y = 0
-
-    for month_num in range(0, 12):
-      max_snowpack = np.max(snowpack_data.loc[snowpack_data.index > datetime(1950, 10, 1, 0, 0), 'basinwide_average'])
-    for x in range(0, plot_x):
-      for y in range(plot_y):
-        self.ax[x][y].set_xlim([0.0, max_snowpack * 1.1])
-        self.ax[x][y].set_ylim([0.0, max_remaining_flow * 1.1/1000.0])
-        
+          month_val = month_index[index.month + 2]
+        #use regression to estimate flow equivalents from snowpack observation
+        if control_location in snow_coefs[month_val]:#use call-specific regressions if the timestep has a 'common' call location
+          snowpack_vol.append((snowpack_data.loc[index, 'basinwide_average'] * snow_coefs[month_val][control_location][0] + snow_coefs[month_val][control_location][1])/1000.0)
+        else:#if not use a general regresssion
+          snowpack_vol.append((snowpack_data.loc[index, 'basinwide_average'] * snow_coefs[month_val]['all'][0] + snow_coefs[month_val]['all'][1])/1000.0)
+        diversion_vol.append(already_diverted)
+        storage_vol.append(storage_series.loc[index, reservoir_station] / 1000.0)#snowpack flow equivalents (taf)
+        plot_index.append(index)
+        counter += 1
+    #plot each water supply index component
+    #storage component
+    snowpack_vol = np.asarray(snowpack_vol)
+    diversion_vol = np.asarray(diversion_vol)
+    storage_vol = np.asarray(storage_vol)
     
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    if show_plot:
-      plt.show()
-    plt.close()
-    
-    return coef
-
-
-  def plot_available_water(self, reservoir_data, snowpack_data, release_data, delivery_data, snow_coefs, res_station, tunnel_station, year_start, year_end, animation_pane, show_plot = False):
-    date_index = []
-    total_storage = []
-    total_consumed = []
-    total_snowpack = []
-    month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
-    annual_water_index = np.ones(year_end-year_start) * 99999999.0
-    threshold_color_list = sns.color_palette('rocket', 4)
-    for year_num in range(year_start, year_end):
-      year_add = 0
-      month_start = 10
-      already_diverted = 0.0
-      for month_num in range(0, 12):
-        month_val = month_index[month_num]
-        if month_start + month_num == 13:
-          month_start -= 12
-          year_add = 1
-        datetime_val = datetime(year_num + year_add, month_start + month_num, 1, 0, 0)
-        available_storage = reservoir_data.loc[datetime_val, res_station]/1000.0
-        already_diverted += delivery_data.loc[datetime_val, tunnel_station]/1000.0
-        control_location = release_data.loc[datetime_val, res_station + '_location']
-        if control_location in snow_coefs[month_val]:
-          available_snowmelt = (snowpack_data.loc[datetime_val, 'basinwide_average'] * snow_coefs[month_val][control_location][0] + snow_coefs[month_val][control_location][1])/1000.0
-        else:
-          available_snowmelt = (snowpack_data.loc[datetime_val, 'basinwide_average'] * snow_coefs[month_val]['all'][0] + snow_coefs[month_val]['all'][1])/1000.0
-        date_index.append(datetime_val)
-        total_storage.append(available_storage)
-        total_snowpack.append(available_storage + available_snowmelt)
-        total_consumed.append(already_diverted + available_storage + available_snowmelt)
-        if month_start + month_num > 3 and month_start + month_num < 10:
-          annual_water_index[year_num - year_start] = min(already_diverted + available_storage + available_snowmelt, annual_water_index[year_num - year_start])
-        
-    #self.ax.fill_between(date_index, np.zeros(len(total_storage)), total_storage, color = 'steelblue', alpha = 0.7)
-    transfer_threshold = 600.0
-    self.ax.fill_between(date_index, np.zeros(len(total_storage)), total_storage, color = 'steelblue', edgecolor = 'black', alpha = 0.4)
+    num_timesteps = len(storage_vol)
+    self.ax.fill_between(plot_index, np.zeros(num_timesteps), storage_vol, color = 'steelblue', edgecolor = 'black', alpha = 0.6)
     legend_elements = [Patch(facecolor='steelblue', edgecolor='black', label='Surface Storage', alpha = 0.7)]
+    animation_pane = 4
+    #snowpack component
     if animation_pane > 1:
-      self.ax.fill_between(date_index, total_storage, total_snowpack, color = 'beige', edgecolor = 'black', alpha = 0.4)
+      self.ax.fill_between(plot_index, storage_vol, storage_vol + snowpack_vol, color = 'beige', edgecolor = 'black', alpha = 1.0)
       legend_elements.append(Patch(facecolor='beige', edgecolor='black', label='Snowpack Storage', alpha = 0.7))
+    #tunnel component
     if animation_pane > 2:
-      self.ax.fill_between(date_index, total_snowpack, total_consumed, color = 'teal', edgecolor = 'black', alpha = 0.4)
-      self.ax.plot(date_index, total_consumed, color = 'indianred', linewidth = 3.0)
+      self.ax.fill_between(plot_index, storage_vol + snowpack_vol, storage_vol + snowpack_vol + diversion_vol, color = 'teal', edgecolor = 'black', alpha = 0.6)
+      self.ax.plot(plot_index, storage_vol + snowpack_vol + diversion_vol, color = 'black', linewidth = 3.5)
       legend_elements.append(Patch(facecolor='teal', edgecolor='black', label='YTD Consumed', alpha = 0.7))
-      legend_elements.append(Line2D([0], [0], color='indianred', lw = 3, label='Total Water'))
+      legend_elements.append(Line2D([0], [0], color='indianred', lw = 3, label='Water Supply Index'))
     if animation_pane > 3:
-      self.ax.plot(date_index, np.ones(len(date_index)) * 550.0, color = 'black', linewidth = 4.0, linestyle = '--')
-      legend_elements.append(Line2D([0], [0], color='black', lw = 3, linestyle = '--', label='Threshold'))
-    if animation_pane > 4:
       for x_cnt, thresh in enumerate([550.0, 600.0, 650.0, 700.0]):
-        self.ax.plot(date_index, np.ones(len(date_index)) * thresh, color = threshold_color_list[x_cnt], linewidth = 4.0, linestyle = '--')
-    self.ax.set_xlim([date_index[0], date_index[-1]])
-    self.ax.set_ylim([0.0, np.max(np.asarray(total_consumed))*1.25])
+        self.ax.plot(plot_index, np.ones(num_timesteps) * thresh, color = colors_use[colors_use_vals[str(int(thresh))]], linewidth = 4.0, linestyle = '--')
+    #format figure
+    self.ax.set_xlim([plot_index[0], plot_index[-1]])
+    self.ax.set_ylim([0.0, np.max(np.asarray(storage_vol + snowpack_vol + diversion_vol))*1.2])
     self.ax.set_ylabel('Total Available\nSupply (tAF)', fontsize = 28, weight = 'bold', fontname = 'Gill Sans MT')
     
     self.ax.legend(handles=legend_elements, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':18}, framealpha = 1.0, ncol = 5)
@@ -1336,337 +230,270 @@ class Plotter():
       plt.show()
     plt.close()
     
-    return annual_water_index
     
-  def plot_CBT_allocation(self, total_consumed, transfer_threshold, cumulative_losses, year_start, year_end, show_plot = False):
-    date_index = []
-    month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
-
-    for year_num in range(year_start, year_end):
-      year_add = 0
-      month_start = 10
-      already_diverted = 0.0
-      for month_num in range(0, 12):
-        month_val = month_index[month_num]
-        if month_start + month_num == 13:
-          month_start -= 12
-          year_add = 1
-        datetime_val = datetime(year_num + year_add, month_start + month_num, 1, 0, 0)
-        date_index.append(datetime_val)
-    cbt_allocations = pd.read_csv('input_files/northern_cbt_allocations.csv', index_col = 0)
-    date_index_allocations = []
-    total_allocations = []
-    new_allocations = []
-    allocation_min = 150.0
-    allocation_max = 350.0
-    for index, row in cbt_allocations.iterrows():
-      date_index_allocations.append(datetime(index, 4, 1, 0, 0))
-      total_allocations.append(float(row['allocation']) * 310.0)
-      new_allocations.append(float(row['allocation']) * 310.0 + cumulative_losses[index - 1910]/1000.0)
-    counter = 0
-    for x in range(0, len(total_consumed)):
-      if total_consumed[x] < transfer_threshold and counter == 0:
-        start_point = date_index[x]
-        counter = 1
-      #elif total_consumed[x] > transfer_threshold and counter == 1:
-        #self.ax.fill_between([start_point, date_index[x]], [allocation_min, allocation_min], [allocation_max,allocation_max], color = 'indianred', edgecolor = 'black', alpha = 0.4)
-        #counter = 0
-    self.ax.plot(date_index_allocations, total_allocations, color = 'black', linewidth = 3.0)
-    self.ax.plot(date_index_allocations, new_allocations, color = 'indianred', linewidth = 3.0)
-    self.ax.set_xlim([date_index[0], date_index[-1]])
-    self.ax.set_ylim([allocation_min, allocation_max])
-    self.ax.set_ylabel('Total Transbasin Diversions (tAF)', fontsize = 28, weight = 'bold', fontname = 'Gill Sans MT')
-    #legend_elements2 = [Patch(facecolor='indianred', edgecolor='black', label='Transfer Months', alpha = 0.7), 
-    legend_elements2 = [Line2D([0], [0], color='black', lw = 3, label='Historical Allocation'),
-                        Line2D([0], [0], color='indianred', lw = 3, label='Historical Allocations w/Transfers')]
-    self.ax.legend(handles=legend_elements2, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':18}, framealpha = 1.0, ncol = 2)
-        
-    for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(20)
-      item.set_fontname('Gill Sans MT')
-    for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(20)
-      item.set_fontname('Gill Sans MT')
-
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    if show_plot:
-      plt.show()
-    plt.close()
-
-
-  def plot_physical_supply(self, simulated_releases, informal_transfer_network, station_id, structures_objects, start_year, end_year, show_plot = False):
-
-    sorted_rights_list = structures_objects[station_id].sorted_rights
-    start_date = datetime(start_year, 10, 1, 0, 0)
-    end_date = datetime(end_year, 9, 30, 0, 0)
-    use_simulated_releases = simulated_releases[np.logical_and(simulated_releases.index > start_date, simulated_releases.index < end_date)]
-    use_informal_transfer_network = informal_transfer_network[np.logical_and(simulated_releases.index > start_date, simulated_releases.index < end_date)]
-    prev_physical = 0.0
-    counter = 0
-    date_prev = 0
-    qalycolors = sns.color_palette('RdYlBu', 100)
-    max_qalycolor = np.max(use_informal_transfer_network[sorted_rights_list[0] + '_physical_available'])
-    for index, row in use_informal_transfer_network.iterrows():
-      
-      if index.month > 3 and index.month < 10:
-        min_paper = 999999.0
-        for sri in sorted_rights_list:
-          if structures_objects[station_id].rights_objects[sri].fill_type == 1:
-            if row[sri + '_paper_available'] < min_paper:              
-              min_paper = min(min_paper, row[sri + '_paper_available'])
-              
-      if index.month < 4 or index.month > 9:
-        min_paper = 999999.0
-        for sri in sorted_rights_list:
-          if structures_objects[station_id].rights_objects[sri].fill_type == 2:
-            if row[sri + '_paper_available'] < min_paper:              
-              min_paper = min(min_paper, row[sri + '_paper_available'])
-      if counter > 0:
-        self.ax.fill_between([date_prev, index], np.zeros(2), [prev_physical/1000.0, row[sorted_rights_list[0] + '_physical_available']/1000.0], color = qalycolors[int(99.0*row[sri + '_physical_available']/max_qalycolor)])
+  def plot_informal_leases(self, thresh_use_list):
+    #figure 4 - annual frequency of informal lease purchases by informal leasing threshold
+    
+    #set color scheme    
+    colors_use, color_use_value = self.set_plotting_color_palette()
+    bar_width = 0.85#width of bars on plot (max = 1.0)
+    freq_scale = 0.5#maximum plotting frequency (x-axis)
+    av_scale = 40.0
+    counter = 0#counter for informal leasing scenarios
+    for thresh_use in thresh_use_list:
+      all_leases = pd.read_csv('results_' + thresh_use + '/purchases_5104055.csv')#get record of additional exports (completed leases)
+      all_leases['datetime'] = pd.to_datetime(all_leases['date'])
+      lease_hist = []
+      for x in range(1950, 2014):
+        total_leases = 0.0
+        #aggregate total leases to annual scale (data is monthly)
+        for index, row in all_leases.iterrows():
+          if row['datetime'].year == x:
+            total_leases += row['demand'] / 1000.0
+        #make list of years with more than 2.5 taf in completed leases
+        if total_leases > 0.0:
+          lease_hist.append(total_leases)
+      #total frequency across the 64 year historical simulation
+      freq_lease = float(len(lease_hist)) / 64.0
+      ave_lease = np.sum(np.asarray(lease_hist)) / float(len(lease_hist))
+      #plot bar of frequency for a given informal leasing scenario
+      self.ax.fill_between([-1 * freq_lease / freq_scale, 0.0], [float(counter), float(counter)], [float(counter) + bar_width, float(counter) + bar_width], facecolor = 'indianred', edgecolor = 'black', linewidth = 0.5, alpha = 1.0)
+      self.ax.fill_between([0.0, ave_lease/av_scale], [float(counter), float(counter)], [float(counter) + bar_width, float(counter) + bar_width], facecolor = 'steelblue', edgecolor = 'black', linewidth = 0.5, alpha = 1.0)
       counter += 1
-      date_prev = datetime(index.year, index.month, 1, 0, 0)
-      prev_physical = row[sorted_rights_list[0] + '_physical_available'] * 1.0
-    self.ax.plot(use_simulated_releases[station_id + '_physical_supply']/1000.0, linewidth = 1.0, color = 'black')
-       
-    self.ax.set_xlim([datetime(start_year, 10, 1, 0, 0), datetime(end_year, 9, 30, 0, 0)])
-    self.ax.set_ylim([0, np.max(use_simulated_releases[station_id + '_physical_supply']) * 1.1 / 1000.0])
-    self.ax.xaxis.set_major_locator(mdates.YearLocator(base=10)) 
-    self.ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
-    self.ax.set_ylabel('Additional Physical Supply (tAF)', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
+    #format plot
+    self.ax.set_ylabel('Lease Option Exercise Threshold', fontsize = 24, weight = 'bold', fontname = 'Gill Sans MT', labelpad = 25)
+    self.ax.set_xlabel('Lease Option Exercise Rate (% of simulated years)    Average Annual Exercised Lease Options (tAF)  ', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.set_xlim([-1, 1])
+    self.ax.set_xticks([-1, -0.5, 0.0, 0.5, 1.0])
+    self.ax.set_xticklabels([str(int(freq_scale * 100)) + '%', str(int(freq_scale * 50)) + '%', '0', str(int(av_scale /2.0)) + ' tAF', str(int(av_scale)) + ' tAF'])
+    self.ax.set_yticks([bar_width/2.0, 1.0 + bar_width/2.0, 2.0 + bar_width/2.0, 3.0 + bar_width/2.0])
+    for y_cnt, thresh_use in enumerate(thresh_use_list):
+      self.ax.get_yticklabels()[y_cnt].set_color(colors_use[color_use_value[thresh_use]])
+
+    self.ax.set_yticklabels(['Mild Drought\n(700 tAF CBI)', 'Moderate Drought\n(650 tAF CBI)', 'Severe Drought\n(600 tAF CBI)', 'Extreme Drought\n(550 tAF CBI)'])
+    
     for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(16)
+      item.set_fontsize(18)
       item.set_fontname('Gill Sans MT')
     for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(16)
+      item.set_fontsize(22)
       item.set_fontname('Gill Sans MT')
-    
-    self.fig.subplots_adjust(right=0.9)
-    cbar_ax = self.fig.add_axes([0.95, 0.15, 0.025, 0.7])
-    sm = plt.cm.ScalarMappable(cmap='RdYlBu', norm=plt.Normalize(vmin=0, vmax=int(np.max(use_simulated_releases[station_id + '_physical_supply'])/1000.0)))
-    clb1 = plt.colorbar(sm, cax = cbar_ax, ticks=[0.0, int(np.max(use_simulated_releases[station_id + '_physical_supply'])/1000.0)])
-    clb1.ax.set_yticklabels(['0', str(int(np.max(use_simulated_releases[station_id + '_physical_supply'])/1000.0))])
-    #clb1.ax.invert_yaxis()
-    cbar_ax.set_title('Demand\nBuyouts (tAF)', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')
-
-    clb1.ax.tick_params(labelsize=16)
-    for item in clb1.ax.xaxis.get_ticklabels():
-      item.set_fontname('Gill Sans MT')  
-    
     plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    if show_plot:
-      plt.show() 
-    plt.close()      
+    plt.close()
+    
+  def plot_third_party_impacts(self, thresh_use_list):
+    #figure 5 - total leases vs. third party impacts and potential compensatory releases for different informal leasing scenarios
+    group_spacing = 2.5#total width of each informal lease scenario group
+    bar_width = 0.85#width of individual bars
+    for x_cnt, folder_name in enumerate(thresh_use_list):#informal lease scenario loop
+      #read in aggregate leases, shortfalls, and compensatory releases for each leasing scenario
+      third_party_impacts = pd.read_csv('results_' + folder_name + '/total_changes.csv', index_col = 0)
+            
+      start_val = 0
+      total_exports = third_party_impacts.loc['Exports', 'change']#total leases
+      e_losses = third_party_impacts.loc['Environment', 'change']#total instream flow shortfall
+      con_losses = third_party_impacts.loc['Other', 'change']#total consumptive diversion shortfall
+      self.ax.fill_between([x_cnt * group_spacing, x_cnt * group_spacing + bar_width], [0.0, 0.0], [total_exports, total_exports], facecolor = 'goldenrod', edgecolor = 'black', linewidth = 1.5, alpha = 0.8)
+      self.ax.fill_between([x_cnt * group_spacing, x_cnt * group_spacing + bar_width], [e_losses, e_losses], [0.0, 0.0], facecolor = 'steelblue', edgecolor = 'black', linewidth = 1.5, alpha = 0.8)
+      self.ax.fill_between([x_cnt * group_spacing, x_cnt * group_spacing + bar_width], [con_losses + e_losses,con_losses + e_losses], [e_losses, e_losses], facecolor = 'forestgreen', edgecolor = 'black', linewidth = 1.5, alpha = 0.8)
+      comp_release = third_party_impacts.loc['Compensatory', 'change']#compensatory release
+      self.ax.fill_between([x_cnt * group_spacing + 1, x_cnt * group_spacing + bar_width + 1], [0.0, 0.0], [total_exports - comp_release, total_exports - comp_release], facecolor = 'goldenrod', edgecolor = 'black', linewidth = 1.5, alpha = 0.8)
+      self.ax.fill_between([x_cnt * group_spacing + 1, x_cnt * group_spacing + bar_width + 1], [total_exports - comp_release, total_exports - comp_release], [total_exports, total_exports], facecolor = 'indianred', edgecolor = 'black', linewidth = 1.5, alpha = 0.8)
+
+    #format plot
+    self.ax.plot([-0.15, x_cnt * group_spacing + bar_width + start_val + 0.15], [0.0, 0.0], linewidth = 1.5, color = 'black')
+    self.ax.set_xlim([-0.15, 10])
+    self.ax.set_ylim([-250, 475])
+    legend_elements = [Patch(facecolor='goldenrod', edgecolor='black', label='C-BT Exports', alpha = 1.0),
+                       Patch(facecolor='indianred', edgecolor='black', label='Compensatory \nReleases', alpha = 1.0),
+                       Patch(facecolor='steelblue', edgecolor='black', label='Environmental\nShortfalls', alpha = 1.0),
+                       Patch(facecolor='forestgreen', edgecolor='black', label='Consumptive\nShortfalls', alpha = 1.0)]
+    
+    self.ax.legend(handles=legend_elements, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':20}, framealpha = 1.0, ncol = 1)  
+    self.ax.set_ylabel('Total Change in Diversions (tAF)', fontsize = 28, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.set_xticks([0.925, 3.425, 5.925, 8.425])
+    self.ax.set_xticklabels(['Leases triggered by:\nExtreme Drought', 'Leases triggered by:\nSevere Drought', 'Leases triggered by:\nModerate Drought', 'Leases triggered by:\nMild Drought'])
+            
+    for item in (self.ax.get_xticklabels()):
+      item.set_fontsize(18)
+      item.set_fontname('Gill Sans MT')
+    for item in (self.ax.get_yticklabels()):
+      item.set_fontsize(18)
+    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
+    plt.close()
+    
+  def plot_informal_price(self, thresh_use, plot_facilitators = False):
+    #this plots marginal transaction cost vs. total informal leasing, compared to the transaction costs of a similar volume of formal leases
+    color_use = sns.color_palette('rocket', 4)
+    #load informal leasing output
+    all_diversions = pd.read_csv('results_' + thresh_use + '/diversions_5104055.csv')  
+    all_purchases = pd.read_csv('results_' + thresh_use + '/purchases_5104055.csv')  
+    all_buyouts = pd.read_csv('results_' + thresh_use + '/buyouts_2_5104055.csv')
+    all_buyouts = all_buyouts.drop_duplicates(subset = ['demand', 'demand_purchase', 'date'])#buyout data is duplicated because it the same structure can be recorded as 'bought out' by multiple water right leases but only needs to be bought out once
+    for lease_df in [all_diversions, all_purchases, all_buyouts]:
+      lease_df['datetime_use'] = pd.to_datetime(lease_df['date'])
+      lease_df['year_use'] = pd.DatetimeIndex(lease_df['datetime_use']).year
+      lease_df['month_use'] = pd.DatetimeIndex(lease_df['datetime_use']).month
+    
+    #find total volume of informal leases received by buyer and lease facilitator options exercised in each year
+    cost_list = []
+    volume_list = []
+    year_list = []
+    for year in range(1950, 2014):
+      #find this years monthly informal lease and facilitator options exercised
+      this_month_purchase = all_purchases[all_purchases['year_use'] == year]
+      this_month_buyout = all_buyouts[all_buyouts['year_use'] == year]
+      this_month_diversion = all_diversions[all_diversions['year_use'] == year]
         
-  def plot_snow_pdf(self, x_range, snow_vals_fill, snow_vals_shortage, density_height, counter1, counter2):  
-    pos = np.linspace(x_range[0], x_range[1], 101)
-    if len(np.unique(snow_vals_fill)) > 1:
-      kde_fill = stats.gaussian_kde(snow_vals_fill)
-      multiplier_fill = density_height / np.max(kde_fill(pos))
-      self.ax[counter1][counter2].fill_between(pos, np.ones(len(pos)), multiplier_fill * kde_fill(pos) + np.ones(len(pos)), edgecolor = 'black', alpha = 0.6, facecolor = 'steelblue')
-    if len(np.unique(snow_vals_shortage)) > 1:
-      kde_shortage = stats.gaussian_kde(snow_vals_shortage)
-      multiplier_shortage = -1.0 * density_height / np.max(kde_shortage(pos))
-      self.ax[counter1][counter2].fill_between(pos, multiplier_shortage * kde_shortage(pos), np.zeros(len(pos)), edgecolor = 'black', alpha = 0.6, facecolor = 'indianred')
-    self.ax[counter1][counter2].set_ylim([0.0 - density_height, 1.0 + density_height])
-  
-  def plot_index_observation(self, x_range, snow_vals, fill_vals, counter1, counter2, ylab):
-
-    self.ax[counter1][counter2].plot(x_range, [0.0, 0.0], color = 'black', linewidth = 1.5)
-    self.ax[counter1][counter2].plot(x_range, [1.0, 1.0], color = 'black', linewidth = 1.5)
-    self.ax[counter1][counter2].scatter(snow_vals, fill_vals, color = 'black', s = 25)
-    self.ax[counter1][counter2].set_xlim(x_range)
-    self.ax[counter1][counter2].set_ylabel(ylab)
-    if counter2 == 0:
-      self.ax[counter1][counter2].set_yticks([0.0, 1.0])
-      self.ax[counter1][counter2].set_yticklabels(['0%', '100%'], fontsize = 10, weight = 'bold', fontname = 'Gill Sans MT')
-    else:
-      self.ax[counter1][counter2].set_yticks([])
-      self.ax[counter1][counter2].set_yticklabels('')
-    if counter1 < 2:
-      self.ax[counter1][counter2].set_xticks([])
-      self.ax[counter1][counter2].set_xticklabels('')
-    else:
-      self.ax[counter1][counter2].set_xlabel('Normalized Snowpack')
-
-  def plot_index_projection(self, estimated_fill, numsteps, xrange, counter1, counter2):
-    self.ax[counter1][counter2].plot(np.linspace(xrange[0], xrange[1], num = numsteps), estimated_fill, linewidth = 2.0, color = 'black')
+      total_purchases = 0.0
+      total_buyouts = 0.0
+      total_diversions = 0.0
+      #purchases from lease sellers are only for the consumptive portion of the use
+      for index, row in this_month_purchase.iterrows():
+        total_purchases += row['demand'] * row['consumptive']
+      #facilitator purchases are for the entire facilitated demand amount at each structure        
+      for index, row in this_month_buyout.iterrows():
+        total_buyouts += row['demand_purchase']
+      #diversions are the additional water that was able to be diverted by the exporters
+      for index, row in this_month_diversion.iterrows():
+        total_diversions += row['demand'] * (-1.0)
+      #find total buyout volume per af of purchased lease seller options (i.e., facilitated demand/leased demand)
+      if total_purchases > 0.0:
+        cost_list.append(total_buyouts/total_purchases)
+        year_list.append(year)
+        volume_list.append(total_diversions / 1000)
       
+    cost_list = np.asarray(cost_list)
+    volume_list = np.asarray(volume_list)
+    year_list = np.asarray(year_list)
+    #sort the years in which informal leases are purchased by 
+    #the transaction cost (i.e., annual average facilitated demand per leased demand)
+    sorted_cost_index = np.argsort(cost_list)
     
-  def add_forecast_pdf(self, annual_forecasts, color_map, mn):
-    exposure_colors = sns.color_palette(color_map, 6)  
-    current_val = 0.0
-    current_index = -1
-    while current_val == 0.0:
-      current_index += 1
-      current_val = annual_forecasts[current_index]
-    if len(np.unique(annual_forecasts[current_index:])) > 1:
-      pos = np.linspace(np.min(annual_forecasts[current_index:]), np.max(annual_forecasts[current_index:]), 101)
-      kde_vals = stats.gaussian_kde(annual_forecasts[current_index:])
-      norm_mult = np.max(kde_vals(pos))
-      self.ax.fill_between(pos, np.zeros(len(pos)), kde_vals(pos)/norm_mult, edgecolor = 'black', alpha = 0.6, facecolor = exposure_colors[mn])  
+    #set up an array to track the cumulative volume leased, moving from lowest-transaction cost year to highest
+    cumulative_volume = np.zeros(len(volume_list) + 1)
+    #set up an array to track the marginal transaction cost per volume of informal lease, moving from lowest-transaction cost yeaer to highest
+    marginal_cost = np.zeros(len(volume_list) + 1)
+    #total savings from informal transfers for all purchases based on a $200/AF (minimum) and $360/AF estimate of formal legal transaction costs
+    cumulative_savings = np.zeros(4)
     
-  def set_legend(self, legend_elements, legend_location, counter1, counter2 = 0, legend_title = 'none'):
-  
-    if legend_title == 'none':
-      if self.sub_cols == 0 and self.sub_rows == 1:
-        self.ax.legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, framealpha = 1.0)
-      elif self.sub_cols == 0:
-        self.ax[counter1].legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, framealpha = 1.0)
-      else:
-        self.ax[counter1][counter2].legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, framealpha = 1.0)
-    else:
-      if self.sub_cols == 0 and self.sub_rows == 1:
-        self.ax.legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, title = legend_title, title_fontsize = 7, framealpha = 1.0)
-      elif self.sub_cols == 0:
-        self.ax[counter1].legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, title = legend_title, title_fontsize = 7, framealpha = 1.0)
-      else:
-        self.ax[counter1][counter2].legend(handles=legend_elements, loc=legend_location, prop={'family':'Gill Sans MT','weight':'bold','size':6}, title = legend_title, title_fontsize = 7, framealpha = 1.0)
-
-  def save_fig(self, figure_name, dpi_val = 150, bbox_inches_val = 'tight', pad_inches_val = 0.0):
-    plt.tight_layout()
-    plt.savefig(figure_name, dpi = int(dpi_val), bbox_inches = bbox_inches_val, pad_inches = pad_inches_val)
-
-  def plot_snow_fnf_relationship(self, basin_snowpack, full_natural_flows, flow_station):
-    snow_months = {}
-    flow_months = {}
-    for x in range(1, 13):
-      snow_months[x] = []
-      flow_months[x] = []
-    counter = 0
-    for date_ix in basin_snowpack.index:
-      if basin_snowpack.loc[date_ix, 'basinwide_average'] > -1.0 and date_ix in full_natural_flows.index:
-        if date_ix.month == 10 or counter == 0:
-          cumulative_flow = 0.0
-          total_flow = 0.0
-          for new_month in range(0, 12):
-            total_month = date_ix.month + new_month
-            counter += 1
-            if total_month > 12:
-              total_month -= 12
-              total_flow += full_natural_flows.loc[datetime(date_ix.year + 1, total_month, 1, 0, 0), flow_station]/ 1000000.0
-            else:
-              total_flow += full_natural_flows.loc[datetime(date_ix.year, total_month, 1, 0, 0), flow_station]/ 1000000.0 
-        snow_months[date_ix.month].append(basin_snowpack.loc[date_ix, 'basinwide_average'])
-        flow_months[date_ix.month].append(total_flow - cumulative_flow)
-        cumulative_flow += full_natural_flows.loc[date_ix, flow_station]/ 1000000.0
-    qalycolors = sns.color_palette('RdYlBu_r', 12)
-    for x in range(1, 13):
-      coef = np.polyfit(np.asarray(snow_months[x]), np.asarray(flow_months[x]), 1)
-      xmin = np.min(np.asarray(snow_months[x]))
-      xmax = np.max(np.asarray(snow_months[x]))
-      if x < 10:
-        self.ax.scatter(np.asarray(snow_months[x]), np.asarray(flow_months[x]), facecolor = qalycolors[x+2], s = 75, edgecolor = 'black') 
-        self.ax.plot([xmin, xmax], [xmin*coef[0] + coef[1], xmax*coef[0] + coef[1]], color = qalycolors[x+2], linewidth = 4.0)
-      else:
-        self.ax.scatter(np.asarray(snow_months[x]), np.asarray(flow_months[x]), facecolor = qalycolors[x-10], s = 75, edgecolor = 'black', linewidth = 1.0) 
-        self.ax.plot([xmin, xmax], [xmin*coef[0] + coef[1], xmax*coef[0] + coef[1]], color = qalycolors[x-10], linewidth = 4.0)
-    self.ax.set_xlim([0.0, 1.02*np.max(np.asarray(snow_months[9]))])
-    self.ax.set_ylim([0.0, 1.1*np.max(np.asarray(flow_months[10]))])
-    self.ax.xaxis.set_major_formatter(mtick.PercentFormatter(xmax = 1.0, decimals = None))
-    self.ax.set_xlabel('Snowpack, % of mean final accumluation', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_ylabel('Remaining Annual Full-Natural-Flow,\nBasinwide (MAF)', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    self.add_colorbar([0.875, 0.7, 0.025, 0.25], [0,6,11], ['October', 'April', 'September'], colorscale = 'RdYlBu_r')
+    unique_facilitator_list = np.zeros(len(volume_list) + 1)#cumulative number of unique facilitators used, moving from lowest-transaction cost year to highest
+    list_of_facilitators = []#running list of unique facilitators
+    for xxx in range(1, len(cumulative_volume)):
+      #cumulative volume of informal leases purchased at a transaction cost lower than marginal_cost[xxx]
+      cumulative_volume[xxx] = cumulative_volume[xxx-1] + volume_list[sorted_cost_index[xxx-1]]
+      #transaction cost of informal leases purchased in year - indexed to sorted position XXX
+      marginal_cost[xxx] = cost_list[sorted_cost_index[xxx-1]]
+      #calculate the savings in a given year, add to cumulative total
+      cumulative_savings[0] += (200. - marginal_cost[xxx] * 5.) * volume_list[sorted_cost_index[xxx-1]]#savings using $5/af facilitator fee, low bound of formal legal cost
+      cumulative_savings[1] += (360. - marginal_cost[xxx] * 5.) * volume_list[sorted_cost_index[xxx-1]]#savings using $5/af facilitator fee, high bound of formal legal cost
+      cumulative_savings[2] += (200. - marginal_cost[xxx] * 10.) * volume_list[sorted_cost_index[xxx-1]]#savings using $10/af facilitator fee, low bound of formal legal cost
+      cumulative_savings[3] += (360. - marginal_cost[xxx] * 10.) * volume_list[sorted_cost_index[xxx-1]]#savings using $10/af facilitator fee, high bound of formal legal cost
+      this_year = year_list[sorted_cost_index[xxx-1]]
+      #add to list of unique facilitators from the facilitators needed to make this years informal leases
+      this_month_buyout = all_buyouts[all_buyouts['year_use'] == this_year]
+      this_month_unique = this_month_buyout['structure'].unique()
+      for x in range(0, len(this_month_unique)):
+        if this_month_unique[x] not in list_of_facilitators:
+          list_of_facilitators.append(this_month_unique[x])
+      unique_facilitator_list[xxx] = len(list_of_facilitators)#count of facilitators from years with the current marginal transaction costs or lower
+      
+    #set plot
+    baseline = np.zeros(len(cumulative_volume))#for calculating the marginal transaction cost curve with different levels of 'facilitator fees'
+    price_use = 5.#facilitator fees calculated in $5/af increments
+    total_inc = 3
+    color_list = ['beige', 'goldenrod', 'indianred']
+    legend_elements = []
+    self.ax.fill_between([0.0, np.max(cumulative_volume)], [200.0, 200.0], [360.0, 360.0], facecolor = 'maroon', edgecolor = 'black', linewidth = 0.5, alpha = 0.9)
+    for inc_no in range(0, total_inc):
+      self.ax.fill_between(cumulative_volume, baseline, baseline + marginal_cost * price_use, color = color_list[inc_no], edgecolor = 'black', linewidth = 1.0, alpha = 1.0)
+      baseline += marginal_cost * price_use
+      legend_elements.append(Patch(facecolor=color_list[inc_no], edgecolor='black', label='Facilitator Fee: $' + str(int(5*(inc_no+1))) + '/AF'))
+    #plot range of informal costs
+    #option to plot the cumulative number of unique facilitators, moving from lowest marginal transaction cost to highest
+    if plot_facilitators:
+      ax2 = self.ax.twinx()
+      ax2.plot(cumulative_volume, unique_facilitator_list, color = 'black', linewidth = 4.5)
+      ax2.set_ylabel('Number of Unique Facilitators', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
+      ax2.set_ylim([0, np.max(unique_facilitator_list) * 9.0/5.0])
+      legend_elements.append(Line2D([0], [0], color='black', lw = 4, label='Number of Facilitators'))
+      for item in (ax2.get_yticklabels()):
+        item.set_fontsize(22)
+        item.set_fontname('Gill Sans MT')
+    #format plot
+    self.ax.set_ylim([0, 360.0])
+    self.ax.set_xlim([0, np.max(cumulative_volume)])
+    self.ax.text(np.max(cumulative_volume) / 2.0, 280.0, 'Range of Transaction Costs,\nFormal Legal System', fontsize = 64, weight = 'bold', fontname = 'Gill Sans MT', ha = 'center', va = 'center', color = 'white')
+    self.ax.set_ylabel('Transaction Costs ($/AF)', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.set_xlabel('Cumulative Lease Volume (tAF)', fontsize = 32, weight = 'bold', fontname = 'Gill Sans MT')
+    self.ax.legend(handles=legend_elements, loc='center left', prop={'family':'Gill Sans MT','weight':'bold','size':32 }, framealpha = 1.0, ncol = 1)          
     for item in (self.ax.get_xticklabels()):
-      item.set_fontsize(18)
-      item.set_fontname('Gill Sans MT')  
-    for item in (self.ax.get_yticklabels()):
-      item.set_fontsize(18)
+      item.set_fontsize(22)
       item.set_fontname('Gill Sans MT')
-
-    plt.tight_layout()
+    for item in (self.ax.get_yticklabels()):
+      item.set_fontsize(22)
+      item.set_fontname('Gill Sans MT')
+    
     plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    plt.show()
-
-  def plot_rights_stack_prob(self, rights_stack_ids, rights_stack_structure_ids, structures_objects, reservoir_list, show_plot = False):
-    right_counter = 0
-    qalycolors = sns.color_palette('magma_r', 6)
-    rights_stack_probs = {}
-    first_fill_rights = []
-    second_fill_rights = []
-    for x in range(0, 12):
-      rights_stack_probs[x] = np.zeros(len(rights_stack_ids))
-    for r_id, s_id in zip(rights_stack_ids, rights_stack_structure_ids):
-      this_right_demands = np.asarray(structures_objects[s_id].rights_objects[r_id].historical_monthly_demand['demand'])
-      counter = 0
-      total_demand = 0.0
-      annual_demands = []
-      for xxx in range(0, len(this_right_demands)):
-        total_demand += this_right_demands[xxx]
-        counter += 1
-        if counter == 12:
-          annual_demands.append(total_demand)
-          counter = 0
-          total_demand = 0.0
-      annual_demands = np.asarray(annual_demands)
-      if right_counter == 0:
-        cumulative_stack_demand = np.zeros(len(annual_demands))
-      for x in range(0, len(annual_demands)):
-        cumulative_stack_demand[x] += annual_demands[x]
-      sorted_demands = np.sort(cumulative_stack_demand)
-      for x in range(0, 12):
-        sorted_index = int(x * len(sorted_demands) / 11.0)
-        if sorted_index == len(sorted_demands):
-          rights_stack_probs[x][right_counter] = sorted_demands[sorted_index - 1] * 1.0
+    plt.close()
+    
+  def plot_annual_option_payments(self, thresh_use_list):
+    #this function plots the overall up-front option payments made under each leasing scenario
+    bar_width = 0.85
+    start_loc = 0
+    #loop through each informal leasing scenario to plot all on same plot
+    for thresh_use in thresh_use_list:
+      #get list of lease facilitators
+      all_facilitators = pd.read_csv('results_' + thresh_use + '/buyouts_2_5104055.csv')
+      facilitators_unique = all_facilitators['structure'].unique()      
+      #load all payments for crop price risk
+      option_prices_seller = pd.read_csv('results_' + thresh_use + '/option_payments_sellers.csv', index_col = 0)
+      #load all payments for return flow risk
+      option_prices_facilitator = pd.read_csv('results_' + thresh_use + '/option_payments_facilitators.csv', index_col = 0)
+      #total payments for crop price risk
+      total_seller_fee = np.sum(option_prices_seller['annual payment'])
+      #group return flow risk payments into payments to lease facilitators and payments to third parties
+      total_facilitator_fee = 0.0
+      total_third_party_fee = 0.0
+      for index, row in option_prices_facilitator.iterrows():
+        if index in facilitators_unique:
+          total_facilitator_fee += row['annual payment']
         else:
-          rights_stack_probs[x][right_counter] = sorted_demands[sorted_index] * 1.0
-      if s_id in reservoir_list:
-        this_fill_right = structures_objects[s_id].rights_objects[r_id].fill_type
-        if this_fill_right == 1:
-          first_fill_rights.append(right_counter)
-        elif this_fill_right == 2:
-          second_fill_rights.append(right_counter)
-      right_counter += 1
-    for x in range(0, 11):
-      color_int = int(np.power(np.power(x-5, 2), 0.5))
-      self.ax.fill_between(np.arange(len(rights_stack_ids)), rights_stack_probs[x]/1000000.0, rights_stack_probs[x+1]/1000000.0, facecolor = qalycolors[color_int], alpha = 0.8 )
-    self.ax.set_xlim([0.0, len(rights_stack_ids)])
-    self.ax.set_ylim([0.0, max(rights_stack_probs[10])/1000000.0])
-    for x in range(0, len(first_fill_rights)):
-      self.ax.plot([first_fill_rights[x], first_fill_rights[x]], [0.0, max(rights_stack_probs[10])/1000000.0], linewidth = 3.0, color = 'indianred')
-    for x in range(0, len(second_fill_rights)):
-      self.ax.plot([second_fill_rights[x], second_fill_rights[x]], [0.0, max(rights_stack_probs[10])/1000000.0], linewidth = 3.0, linestyle = '--', color = 'steelblue')
-    
-    self.ax.set_xticks([len(rights_stack_ids) * 0.2, len(rights_stack_ids) * 0.8])
-    self.ax.set_xticklabels(['<-- More Senior', 'More Junior -->'])
-    self.ax.set_xlabel('Right Priority', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    self.ax.set_ylabel('Cumulative Basin Demand (MAF)', fontsize = 20, weight = 'bold', fontname = 'Gill Sans MT')
-    self.add_colorbar([0.075, 0.55, 0.025, 0.25], [0, 1], ['Median', 'Historical\nExtreme'], colorscale = 'magma_r')
+          total_third_party_fee += row['annual payment']
+      #plot bar chart
+      self.ax.fill_between([start_loc, start_loc + bar_width], np.zeros(2), total_seller_fee/1000 * np.ones(2), facecolor = 'steelblue', edgecolor = 'black', linewidth = 0.5)
+      start_loc += 1
+      self.ax.fill_between([start_loc, start_loc + bar_width], np.zeros(2), total_facilitator_fee/1000 * np.ones(2), facecolor = 'indianred', edgecolor = 'black', linewidth = 0.5)
+      start_loc += 1
+      self.ax.fill_between([start_loc, start_loc + bar_width], np.zeros(2), total_third_party_fee/1000 * np.ones(2), facecolor = 'teal', edgecolor = 'black', linewidth = 0.5)
+      start_loc += 1.5
+    #format plot
+    self.ax.set_ylabel('Total Up-front Option Payments ($1000/year)', fontsize = 18, weight = 'bold', fontname = 'Gill Sans MT')  
+    self.ax.set_xticks([0.925, 4.425, 7.925, 11.425])
+    self.ax.set_xticklabels(['Most Extreme\nDrought\nCBI = 550 tAF', 'Severe\nDrought\nCBI = 600 tAF', 'Moderate\nDrought\nCBI = 650 tAF', 'Mild\nDrought\nCBI = 700 tAF'])
     for item in (self.ax.get_xticklabels()):
       item.set_fontsize(18)
-      item.set_fontname('Gill Sans MT')  
+      item.set_fontname('Gill Sans MT')
     for item in (self.ax.get_yticklabels()):
       item.set_fontsize(18)
       item.set_fontname('Gill Sans MT')
+    self.ax.set_xlim([0, 13.5])
+    self.ax.set_ylim([0, 200])
+    legend_elements = [Patch(facecolor='steelblue', edgecolor='black', label='Annual Seller Option Payments', alpha = 1.0),
+                        Patch(facecolor='indianred', edgecolor='black', label='Annual Facilitator Option Payments', alpha = 1.0),
+                        Patch(facecolor='teal', edgecolor='black', label='Annual Third-Party Option Payments', alpha = 1.0)]
+    self.ax.legend(handles=legend_elements, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':22}, framealpha = 1.0, ncol = 1)  
+    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)    
 
-    legend_elements = [Line2D([0], [0], color='indianred', lw = 2, label='First Fill Rights'), Line2D([0], [0], color='steelblue', lw = 2, linestyle = '--', label='Second Fill Rights')]
-    self.ax.legend(handles=legend_elements, loc='upper left', prop={'family':'Gill Sans MT','weight':'bold','size':18}, framealpha = 1.0, ncol = 1)      
-
-    plt.savefig(self.figure_name, dpi = 300, bbox_inches = 'tight', pad_inches = 0.0)
-    if show_plot:
-      plt.show()
     plt.close()
     
     
-  def add_colorbar(self, coords, label_loc, label_key, title_name = 'none', colorscale = 'none', nr = 0, nc = 0, fontsize = 12):
-    if self.type == 'single':   
-      fig = self.ax.get_figure()
-    elif self.type == '2d':      
-      fig = self.ax[nr][nc].get_figure()
-    cax = fig.add_axes([coords[0], coords[1], coords[2], coords[3]])
-    cmap = pl.cm.RdBu
-    my_cmap = cmap(np.arange(cmap.N))
-    my_cmap[:,-1] = np.linspace(0.9, 1, cmap.N)
-    if colorscale == 'none':
-      my_cmap = ListedColormap(my_cmap)
-    else:
-      my_cmap = ListedColormap(sns.color_palette(colorscale).as_hex())
-    sm = plt.cm.ScalarMappable(cmap=my_cmap, norm=plt.Normalize(vmin=label_loc[0], vmax=label_loc[-1]))
-    # fake up the array of the scalar mappable. Urgh...
-    sm._A = []
-    cbar = fig.colorbar(sm, cax=cax)
-    if title_name == 'none':
-      skip =1
-    else:
-      cax.set_title(title_name, fontsize = fontsize, weight = 'bold', fontname = 'Gill Sans MT')
-    cbar.set_ticks(label_loc)
-    cbar.ax.set_yticklabels(label_key, fontsize = fontsize, weight = 'bold', fontname = 'Gill Sans MT')
+    
+    
+    
+
+
+
+
+
+  

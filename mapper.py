@@ -16,7 +16,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 class Mapper():
 
-  def __init__(self, nr = 1, nc = 0):
+  def __init__(self, nr = 1, nc = 0, ax_insert = 'none'):
     self.sub_rows = nr
     self.sub_cols = nc
     if self.sub_cols == 0:
@@ -27,7 +27,10 @@ class Mapper():
       else:
         self.type = '1d'
     else:
-      self.fig, self.ax = plt.subplots(self.sub_rows, self.sub_cols, figsize = (15,12.5))
+      if ax_insert == 'none':
+        self.fig, self.ax = plt.subplots(self.sub_rows, self.sub_cols, figsize = (15,12.5))
+      else:
+        self.ax = ax_insert
       self.type = '2d'
     self.band_min = np.ones(3)*(-1.0)
     self.band_max = np.ones(3)*(-1.0)
@@ -61,7 +64,7 @@ class Mapper():
       self.ax[nr][nc].imshow(image, extent = spatial_extent)
   def add_legend(self, legend_location, legend_handle, legend_properties, nr = 0, nc = 0):
     if self.type == 'single':
-      self.ax.legend(handles=legend_handle, loc=legend_location, prop=legend_properties)
+      self.ax.legend(handles=legend_handle, loc=legend_location, prop=legend_properties, facecolor = 'beige', framealpha = 0.4, edgecolor = 'black')
     elif self.type == '2d':
       self.ax[nr][nc].legend(handles=legend_handle, loc=legend_location, prop=legend_properties)
   
@@ -180,6 +183,8 @@ class Mapper():
         self.ax.set_xlim(xlim)
         self.ax.set_xticklabels('')
         self.ax.set_yticklabels('')
+        self.ax.set_xticks([])
+        self.ax.set_ytickls([])
         self.ax.set_title(title)    
       elif self.type == '1d':
         for nr in range(0, self.sub_rows):
