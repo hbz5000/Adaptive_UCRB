@@ -238,7 +238,7 @@ class Plotter():
     plt.close()
     
   def plot_available_water(self, index_use_list = [550.0, 600.0, 650.0, 700.0]):
-    cbi_timeseries = pd.read_csv('cbi_timeseries.csv', index_col = 0)
+    cbi_timeseries = pd.read_csv('output_files/cbi_timeseries.csv', index_col = 0)
     plot_index = pd.to_datetime(cbi_timeseries.index)
     snowpack_vol = np.asarray(cbi_timeseries['snowpack'])
     diversion_vol = np.asarray(cbi_timeseries['diversion'])
