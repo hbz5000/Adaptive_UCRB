@@ -1,0 +1,22 @@
+
+________________________________________________________________________
+  Oprinp; Warning the following Operation Rights have a 
+          source Admin # (*.ddr, *.rer, *.wer, etc) not
+          equal to the value in the operational right file
+          The operational right value used may or may not 
+          be adjusted as presented below.
+          Note Augmentation Well (type 37) rules are not
+          reported below since an adjusted (lower) operating
+          rule priority is very common
+
+                                              Source     Operational     Value Used
+      # Type Opr ID       Source ID           Admin #        Admin #        Admin #
+  _____ ____ ____________ ___________  ______________ ______________ ______________
+      1   11 72_UWCD0.11  7201487.01      38847.00000        1.00000    38846.99999
+      2   11 72_UWCD0.12  7201487.02      40013.39450        1.00001    40013.39607
+      3   14 72_UWCD0.15  7200764.01      30895.29100    48942.48440    30895.29033
+      4   11 72005420.01  7200542.01          1.00000    37486.00000        1.00000
+      5   11 72005830.01  7200583.01          1.00000    37486.00000        1.00000
+      6   11 53008830.01  5200731.01      13985.00000    20427.19140    13985.00000
+      7   11 53008830.02  5200731.02      14774.00000    33023.26560    14774.00000
+      8   11 53008830.03  5200731.03      20427.19340    33023.26560    20427.19244
