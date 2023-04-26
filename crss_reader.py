@@ -5,8 +5,6 @@ from datetime import datetime
 def create_input_data_dictionary(baseline_scenario, adaptive_scenario, folder_name = ''):
   input_data_dictionary = {}
   ###geographic layout
-  input_data_dictionary['hydrography'] = 'Shapefiles_UCRB/NHDPLUS_H_1401_HU4_GDB.gdb'
-  input_data_dictionary['structures'] = 'Shapefiles_UCRB/Div_5_structures.shp'
   ##basin labels
   input_data_dictionary['HUC4'] = ['1401',]
   input_data_dictionary['HUC8'] = ['14010001', '14010002', '14010003', '14010004', '14010005']
@@ -16,19 +14,19 @@ def create_input_data_dictionary(baseline_scenario, adaptive_scenario, folder_na
 
   ###statemod input data
   ##monthly demand data
-  input_data_dictionary['structure_demand'] = 'input_files/cm2015' + baseline_scenario + '.ddm'
+  input_data_dictionary['structure_demand'] = 'cm2015' + baseline_scenario + '.ddm'
   ##water rights data
-  input_data_dictionary['structure_rights'] = 'input_files/cm2015' + baseline_scenario + '.ddr'
+  input_data_dictionary['structure_rights'] = 'cm2015' + baseline_scenario + '.ddr'
   ##reservoir fill rights data
-  input_data_dictionary['reservoir_rights'] = 'input_files/cm2015' + baseline_scenario + '.rer'
+  input_data_dictionary['reservoir_rights'] = 'cm2015' + baseline_scenario + '.rer'
   ##reservoir fill rights data
   input_data_dictionary['instream_rights'] = 'cm2015.ifr'
   ##full natural flow data
   input_data_dictionary['natural flows'] = 'cm2015x.xbm'
   ##flow/node network
-  input_data_dictionary['downstream'] = 'input_files/cm2015.rin'
+  input_data_dictionary['downstream'] = 'cm2015.rin'
   ##historical reservoir data
-  input_data_dictionary['historical_reservoirs'] = 'input_files/cm2015.eom'
+  input_data_dictionary['historical_reservoirs'] = 'cm2015.eom'
   ##call data
   input_data_dictionary['calls'] = 'cm2015' + baseline_scenario + '.xca'
 
@@ -41,6 +39,8 @@ def create_input_data_dictionary(baseline_scenario, adaptive_scenario, folder_na
   input_data_dictionary['return_flows'] = 'cm2015' + baseline_scenario + '.xss'
   ##plan flow data
   input_data_dictionary['plan_releases'] = 'cm2015' + baseline_scenario + '.xpl'
+  ##operational data
+  input_data_dictionary['operations'] = 'cm2015' + baseline_scenario + '.opr'
   
   ##adaptive reservoir output data
   input_data_dictionary['reservoir_storage_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xre'
@@ -51,12 +51,14 @@ def create_input_data_dictionary(baseline_scenario, adaptive_scenario, folder_na
   ##adaptive return flows
   input_data_dictionary['return_flows_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xss'
   ##plan flow data
-  input_data_dictionary['plan_releases'] = folder_name + 'cm2015' + adaptive_scenario + '.xpl'
+  input_data_dictionary['plan_releases_new'] = folder_name + 'cm2015' + adaptive_scenario + '.xpl'
 
   input_data_dictionary['snow'] = 'Snow_Data/'
+  input_data_dictionary['structures'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div_5_structures.shp'
   input_data_dictionary['irrigation'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div5_Irrig_2015.shp'
   input_data_dictionary['ditches'] = 'Shapefiles_UCRB/Div5_Irrigated_Lands_2015/Div5_2015_Ditches.shp'
   input_data_dictionary['aggregated_diversions'] = 'output_files/aggregated_diversions.txt'
+  input_data_dictionary['alfalfa_prices'] = 'output_files/alfalfa_prices_historical.csv'
 
 
   return input_data_dictionary
@@ -725,6 +727,38 @@ def read_simulated_reservoirs(reservoir_data, reservoir_list, initial_year, end_
 
   return simulated_storage  
 
+def read_simulated_reservoirs_list(reservoir_data, reservoir_list, initial_year, end_year, year_read = 'all'):
+  #this reads simulated output for reservoir storage & how much water is impounded by reservoirs
+
+  #set datetime_index
+  datetime_index = create_datetime_index(initial_year, end_year, 10)
+  month_num_dict = make_month_num_dict()#dictionary to translate StateMod month keys into integers
+        
+  #create dataframe for formatted data
+  simulated_storage = pd.DataFrame(index = datetime_index, columns = reservoir_list)
+  for reservoir_use in reservoir_list:
+    simulated_storage[reservoir_use] = np.zeros(len(datetime_index))
+    #loop through lines & extract storage and diversion data
+  for i in range(len(reservoir_data)):
+    use_line = True
+    monthly_values = reservoir_data[i].split('.')
+    first_data = monthly_values[0].split()
+    if len(first_data) > 1:
+      structure_name = str(first_data[0])
+      if structure_name in reservoir_list:
+        try:
+          account_num = int(first_data[1])
+          year_num = int(first_data[2])
+          month_num = month_num_dict[str(first_data[3])]
+        except:
+          use_line = False
+        if use_line and account_num == 0:
+          datetime_val = datetime(year_num, month_num, 1, 0, 0)
+          simulated_storage.loc[datetime_val, structure_name] = float(monthly_values[15])
+
+  return simulated_storage  
+
+
 def update_structure_deliveries(delivery_data, update_year, update_month, read_from_file = False):
 
   month_num_dict = make_month_num_dict()#dictionary to translate StateMod month keys into integers
@@ -886,9 +920,9 @@ def find_historical_max_deliveries(structure_deliveries, structure_id):
     
   return max_monthly, max_annual
 
-def get_alfalfa_residuals():
+def get_alfalfa_residuals(read_filename):
   #this calculates annual change in alfalfa prices 
-  alfalfa_hist_prices = pd.read_csv('input_files/crop_costs/alfalfa_prices_historical.csv')#load annual alfalfa price timeseries
+  alfalfa_hist_prices = pd.read_csv(read_filename)#load annual alfalfa price timeseries
   residual = np.zeros(len(alfalfa_hist_prices['year']))
   counter = 0
   #put prices in annual order
@@ -902,7 +936,46 @@ def get_alfalfa_residuals():
   #return timeseries of annual changes in alfalfa price
   return residual
 
-
+def get_cbi_timeseries(tunnel_deliveries, storage_series, control_series, snowpack_data, snow_coefs, tunnel_station, reservoir_station, show_plot = False):
+  #figure 3 in the manuscript - water supply index as a function of storage, tunnel exports, and snowpack flow equivalents
+  #get index over historical simulation period
+  month_index = ['OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP']
+  already_diverted = 0.0
+  #historical simulation period is the index of input dataframes
+  diversion_vol = []
+  storage_vol = []
+  snowpack_vol = []
+  plot_index = []
+  #for each timestep, calculate the index componenets
+  counter = 0
+  for index, row in tunnel_deliveries.iterrows():
+    if index.year >= 1950:
+      if index.month == 10:
+        already_diverted = 0.0
+      already_diverted += tunnel_deliveries.loc[index, tunnel_station] / 1000.0#tunnel exports (taf)
+      available_storage = storage_series.loc[index, reservoir_station] / 1000.0#storage (taf)
+      control_location = control_series.loc[index, reservoir_station + '_location']#get river call location to determine snow/flow relationship
+      #get month to determine snow/flow relationship
+      if index.month > 9:
+        month_val = month_index[index.month - 10]
+      else:
+        month_val = month_index[index.month + 2]
+      #use regression to estimate flow equivalents from snowpack observation
+      if control_location in snow_coefs[month_val]:#use call-specific regressions if the timestep has a 'common' call location
+        snowpack_vol.append((snowpack_data.loc[index, 'basinwide_average'] * snow_coefs[month_val][control_location][0] + snow_coefs[month_val][control_location][1])/1000.0)
+      else:#if not use a general regresssion
+        snowpack_vol.append((snowpack_data.loc[index, 'basinwide_average'] * snow_coefs[month_val]['all'][0] + snow_coefs[month_val]['all'][1])/1000.0)
+      diversion_vol.append(already_diverted)
+      storage_vol.append(storage_series.loc[index, reservoir_station] / 1000.0)#snowpack flow equivalents (taf)
+      plot_index.append(index)
+      counter += 1
+  #plot each water supply index component
+  #storage component
+  cbi_timeseries = pd.DataFrame(index = plot_index)
+  cbi_timeseries['snowpack'] = snowpack_vol
+  cbi_timeseries['diversion'] = diversion_vol
+  cbi_timeseries['storage'] = storage_vol
+  cbi_timeseries.to_csv('cbi_timeseries.csv')
 
 
 

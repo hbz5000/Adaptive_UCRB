@@ -10,10 +10,8 @@ import shutil
 #create dictionary of input filenames
 input_data_dictionary = crss.create_input_data_dictionary('B', 'A')
 
-
-for thresh_use in [600, 650, 700]:
-  res_thres = {}
-  res_thres['5104055'] = float(thresh_use)
+for thresh_use in [550,]:
+    
   #create new basin (this will hold all the structure/reservoir objects for statemod simluation input/output)
   ucrb = Basin()
   ucrb.load_basin_snowpack(input_data_dictionary)
@@ -33,6 +31,11 @@ for thresh_use in [600, 650, 700]:
   #set informal targets (diversion point & demand point)
   #this is the location of the right that is used to divert water (when this right is out-of-priority, informal transfers make it in-priority)
   reservoir_use = '5104055'
+  res_thres = {}
+  res_thres[reservoir_use] = float(thresh_use)
+  results_dir = 'results_' + str(int(res_thres[reservoir_use]))
+  if not os.path.isdir(results_dir):
+    os.makedirs(results_dir)
   #this is the location of the demand that is filled by the diversion above
   tunnel_transfer_to = '5104634'
 
@@ -129,7 +132,10 @@ for thresh_use in [600, 650, 700]:
   snow_coefs_tot = {}
   for res in ucrb.reservoir_list:
     #univariate linear regression coefficients between the observed snowpack and future inflow to a reservoir, conditional on month of the year and any existing 'calls' on the river
-    snow_coefs_tot[res] = ucrb.make_snow_regressions('14010001', res, 1950, 2013)
+    simulated_reservoir_timeseries = crss.read_simulated_reservoirs(reservoir_storage_data_b, res, year_start, year_end)
+    historical_monthly_available = pd.DataFrame(list(structure_inflows[res + '_available']), index = structure_inflows.index, columns = ['available',])
+    historical_monthly_control = pd.DataFrame(list(structure_inflows[res + '_location']), index = structure_inflows.index, columns = ['location',])
+    snow_coefs_tot[res] = ucrb.make_snow_regressions('14010001', historical_monthly_control, simulated_reservoir_timeseries, historical_monthly_available, res, 1950, 2013)
 
 ###################################
 ####simulate informal transfers####
@@ -264,10 +270,10 @@ for thresh_use in [600, 650, 700]:
           all_change2 = pd.concat([all_change2, change_points_buyout_1])
           all_change3 = pd.concat([all_change3, change_points_buyout_2])
           all_change4 = pd.concat([all_change4, change_points_purchase_3])
-          all_change1.to_csv('results_' + str(int(res_thres[res])) + '/purchases_' + res + '.csv')
-          all_change2.to_csv('results_' + str(int(res_thres[res])) + '/buyouts_' + res + '.csv')
-          all_change3.to_csv('results_' + str(int(res_thres[res])) + '/buyouts_2_' + res + '.csv')
-          all_change4.to_csv('results_' + str(int(res_thres[res])) + '/diversions_' + res + '.csv')
+          all_change1.to_csv(results_dir + '/purchases_' + res + '.csv')
+          all_change2.to_csv(results_dir + '/buyouts_' + res + '.csv')
+          all_change3.to_csv(results_dir + '/buyouts_2_' + res + '.csv')
+          all_change4.to_csv(results_dir + '/diversions_' + res + '.csv')
         #trigger leases, set the trigger to update adaptive simulation forward 2 years        
           adaptive_toggle = 1
           last_year_use = year_num + 2
@@ -289,7 +295,7 @@ for thresh_use in [600, 650, 700]:
           os.system("StateMod_Model_15.exe cm2015A -simulate")
         #update diversion record        
           all_change4 = pd.concat([all_change4, change_points_purchase])
-          all_change4.to_csv('results_' + str(int(res_thres[res])) + '/diversions_' + res + '.csv')
+          all_change4.to_csv(results_dir + '/diversions_' + res + '.csv')
 
         #update new unformatted data
           demand_data_new = crss.read_text_file(input_data_dictionary['structure_demand_new'])
@@ -310,4 +316,4 @@ for thresh_use in [600, 650, 700]:
   copy_file_list = ['.ddm', '.xca', '.xdd', '.xir', '.xop', '.xpl', '.xre', '.xrp', '.xss']   
   file_base = 'cm2015A'   
   for ender in copy_file_list:
-    shutil.copyfile(file_base + ender, 'results_' + str(int(res_thres[res])) + '/' + file_base + ender)
+    shutil.copyfile(file_base + ender, results_dir + '/' + file_base + ender)

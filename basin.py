@@ -348,7 +348,7 @@ class Basin():
           
 
 
-  def make_snow_regressions(self, snowpack_basin, res_station, year_start, year_end):
+  def make_snow_regressions(self, snowpack_basin, historical_monthly_control, simulated_reservoir_timeseries, historical_monthly_available, res_station, year_start, year_end):
     #this function makes regression equations to calculate the relationship between snowpack
     #and future flow available for storage at a reservoir based on the month & if there are any 'calls' on the river
     
@@ -360,7 +360,7 @@ class Basin():
       monthly_control[x] = []
       monthly_control_int[x] = []
     #make a list of all the 'control' locations making calls at the reservoir
-    for index, row in self.structures_objects[res_station].historical_monthly_control.iterrows():
+    for index, row in historical_monthly_control.iterrows():
       if index > datetime(1950, 10, 1, 0, 0):
         this_row_month = index.month
         monthly_control_int[this_row_month].append(row['location'])
@@ -406,7 +406,7 @@ class Basin():
         datetime_val = datetime(year_num + year_add, month_start + month_num, 1, 0, 0)
         remaining_usable_flow = 0.0
         current_snowpack = snowpack_data.loc[datetime_val, 'basinwide_average']#snowpack observation
-        control_location = self.structures_objects[res_station].historical_monthly_control.loc[datetime_val, 'location']#call location classification
+        control_location = historical_monthly_control.loc[datetime_val, 'location']#call location classification
         
         #find remaining flow that can be impounded at the reservoir
         for lookahead_month in range(month_num, 12):
@@ -414,7 +414,7 @@ class Basin():
             lookahead_datetime = datetime(year_num + 1, lookahead_month - 2, 1, 0, 0)
           else:
             lookahead_datetime = datetime(year_num, lookahead_month + 10, 1, 0, 0)
-          remaining_usable_flow += float(self.structures_objects[res_station].simulated_reservoir_timeseries.loc[lookahead_datetime, res_station + '_diversions']) + float(self.structures_objects[res_station].historical_monthly_available.loc[lookahead_datetime, 'available'])
+          remaining_usable_flow += float(simulated_reservoir_timeseries.loc[lookahead_datetime, res_station + '_diversions']) + float(historical_monthly_available.loc[lookahead_datetime, 'available'])
           
         #add the snow/flow observations to the list corresponding with the call location
         if remaining_usable_flow < 0.0 or pd.isna(current_snowpack):
@@ -590,6 +590,7 @@ class Basin():
           sorted_returns = available_purchases['consumptive_fraction'][sorted_order]
           
           total_demand = 0.0
+          x = 0
           for x in range(0, len(sorted_demand)):
             #find consumptive portion of the water right
             total_demand += sorted_demand[x] * sorted_returns[x]
@@ -657,7 +658,7 @@ class Basin():
             if total_demand > total_physical_supply:
               break
         break
-
+      
       if 'Irrigation' in self.structures_objects[station_id].structure_types:
         try:
           for r_id in self.structures_objects[station_id].rights_list:
@@ -734,9 +735,9 @@ class Basin():
             if self.structures_objects[struct_id].rights_objects[ind_right].priority < end_priority:
               total_decree += self.structures_objects[struct_id].rights_objects[ind_right].decree_af[date_use.month-1]
           #find total deliveries made to this structure
-          total_delivery_level = self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'] * 1.0
+          total_delivery_level = self.structures_objects[struct_id].historical_monthly_deliveries.loc[date_use, 'deliveries'] * 1.0
           #find unfulfilled demand at this structure (only for rights senior to the lease buyer)
-          total_extra_demand = max(min(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'], total_decree) - self.structures_objects[struct_id].adaptive_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
+          total_extra_demand = max(min(self.structures_objects[struct_id].adaptive_monthly_demand.loc[date_use, 'demand'], total_decree) - self.structures_objects[struct_id].historical_monthly_deliveries.loc[date_use, 'deliveries'], 0.0)
           #senior, unfulfilled demand at this structure is equal to the facilitated demand.  
           #if there is facilitated demand, need to find if it can make a claim to the informal lease
           if total_extra_demand > 0.0:
@@ -866,14 +867,32 @@ class Basin():
   
     return change_points_df, change_points_buyout_df
 
-  def find_lease_impacts(self, downstream_data, start_year, end_year, structure_print_list, iteration_no, folder_name):
+  def compare_reservoir_storage(self, baseline_storage, scenario_storage):
+    reservoir_list = []
+    date_list = []
+    difference_list = []
+    for res_use in baseline_storage.columns:
+      self.structures_objects[res_use].historical_monthly_storage = pd.DataFrame()
+      self.structures_objects[res_use].adaptive_monthly_storage = pd.DataFrame()
+    for index, row in baseline_storage.iterrows():
+      for res_use in baseline_storage.columns:
+        self.structures_objects[res_use].historical_monthly_storage.loc[index, 'storage'] = row[res_use]
+        self.structures_objects[res_use].adaptive_monthly_storage.loc[index, 'storage'] = scenario_storage.loc[index, res_use]
+        
+  def find_lease_impacts(self, downstream_data, start_year, end_year, structure_print_list, folder_name):
     #this function calculates the total change in surface water deliveries to right holders in the basin as a result of informal leases (excluding lease buyers and sellers)
     #it also calculates the compensatory releases required to mitigate the shortfalls
     user_type_list = ['Exports', 'Environment', 'Other', 'Compensatory']
     leased_shortfalls = pd.DataFrame(index = user_type_list, columns = ['change',])
     count_shortfalls = pd.DataFrame(index = user_type_list, columns = ['change',])
     structure_purchases = pd.read_csv('results_' + folder_name + '/purchases_5104055.csv')
-    purchase_structure_list = structure_purchases['structure'].astype(str).unique()
+    purchase_structure_list = structure_purchases['structure'].astype(str).unique().tolist()
+    purchase_structure_list.append('5103710')
+    purchase_structure_list.append('5103695')
+    purchase_structure_list.append('5103709')
+    purchase_structure_list.append('5104055')
+    purchase_structure_list.append('5003668')
+    purchase_structure_list.append('5100958')
 
     delivery_scenarios = {}
     for x in user_type_list:
@@ -910,6 +929,20 @@ class Basin():
           total_annual_deliveries += row['deliveries']/1000.0#total deliveries (taf)
       annual_deliveries_adaptive[year_counter] = total_annual_deliveries * 1.0
       
+      storage_change = np.zeros(end_year - start_year + 1)
+      try:
+        max_storage_change = 0.0
+        for index, row in self.structures_objects[structure_name].historical_monthly_storage.iterrows():
+          if index.year >= start_year and index.year <= end_year:
+            if index.month == 10:
+              storage_change[year_counter] = max_storage_change * 1.0
+              year_counter += 1            
+              max_storage_change = 0.0
+            max_storage_change = max(max_storage_change, (row['storage'] - self.structures_objects[structure_name].adaptive_monthly_storage.loc[index, 'storage']) /1000.0)#total deliveries (taf)
+        storage_change[year_counter] = max_storage_change * 1.0
+      except:
+        pass
+      
       #find monthly difference in deliveries to the individual structure between baseline & lease scenarios
       delivery_change = annual_deliveries_adaptive - annual_deliveries_baseline
       #look at the change in deliveries at all structures NOT selling their leases - third parties but also lease facilitators
@@ -940,12 +973,18 @@ class Basin():
           if np.sum(delivery_change[change_years]) < 0.0:
             leased_shortfalls.loc['Other', 'change'] += np.sum(delivery_change[change_years])
             count_shortfalls.loc['Other', 'change'] += 1
+        elif 'Reservoir' in self.structures_objects[structure_name].structure_types:
+          leased_shortfalls.loc['Other', 'change'] -= np.sum(storage_change[change_years])
+          count_shortfalls.loc['Other', 'change'] += 1
+          
       #save full timeseries from selected structures
+      
       if structure_name in structure_print_list:
         delivery_scenarios[structure_name + '_baseline'] = annual_deliveries_baseline
         delivery_scenarios[structure_name + '_reoperation'] = annual_deliveries_adaptive
     
     
+    purchase_structure_list.append('5104634')
     month_name_list = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
     #loop through downstream users to determine
     #the volume of leases required for compensatory flows
@@ -959,6 +998,11 @@ class Basin():
         first_line = int(j * 1)
         break
     #calculate the shortages at each station
+    individual_shortage = []
+    individual_compensatory = []
+    individual_stations = []
+    individual_dates = []
+    reservoir_recal = {}
     for j in range(first_line, len(downstream_data)):
       station_id = str(downstream_data[j][station_id_column_start:station_id_column_length].strip())
       if station_id not in purchase_structure_list:
@@ -966,16 +1010,51 @@ class Basin():
         counter = 0
         for index, row in self.structures_objects[station_id].historical_monthly_deliveries.iterrows():  
         #find shortage relative to baseline at the structure/timestep
-          shortage = (self.structures_objects[station_id].historical_monthly_deliveries.loc[index, 'deliveries'] - self.structures_objects[station_id].adaptive_monthly_deliveries.loc[index, 'deliveries']) / 1000.0
           month_id = month_name_list[index.month - 1]
+          if 'Reservoir' in self.structures_objects[station_id].structure_types:
+            if station_id in reservoir_recal:
+              try:
+                reservoir_recal[station_id] = max(min(reservoir_recal[station_id], self.structures_objects[station_id].historical_monthly_storage.loc[index, 'storage'] - self.structures_objects[station_id].adaptive_monthly_storage.loc[index, 'storage']), 0.0)
+              except:
+                reservoir_recal[station_id] = 0.0
+                
+            else:
+              reservoir_recal[station_id] = 0.0
+            try:
+              shortage = (self.structures_objects[station_id].historical_monthly_storage.loc[index, 'storage'] - self.structures_objects[station_id].adaptive_monthly_storage.loc[index, 'storage'] - reservoir_recal[station_id]) / 1000.0
+              if station_id == '3603543':
+                dillon_shortage = (self.structures_objects['3604512'].historical_monthly_storage.loc[index, 'storage'] - self.structures_objects['3604512'].adaptive_monthly_storage.loc[index, 'storage']) / 1000.0
+                if dillon_shortage < 0.0:
+                  shortage += dillon_shortage
+              if station_id == '3604512':
+                gm_shortage = (self.structures_objects['3603543'].historical_monthly_storage.loc[index, 'storage'] - self.structures_objects['3603543'].adaptive_monthly_storage.loc[index, 'storage']) / 1000.0
+                if gm_shortage < 0.0:
+                  shortage += gm_shortage
+                  
+              reservoir_recal[station_id] = max(self.structures_objects[station_id].historical_monthly_storage.loc[index, 'storage'] - self.structures_objects[station_id].adaptive_monthly_storage.loc[index, 'storage'], 0.0)
+            except:
+              shortage = 0.0
+            self.structures_objects[station_id].return_fraction.loc[month_id, station_id] = 0.0          
+          else:
+            shortage = (self.structures_objects[station_id].historical_monthly_deliveries.loc[index, 'deliveries'] - self.structures_objects[station_id].adaptive_monthly_deliveries.loc[index, 'deliveries']) / 1000.0
           if shortage > 0.0:
             return_use = min(shortage, running_returns[counter])#use return flows to meet shortage if possible
             running_returns[counter] -= return_use#subtract consumed return flows
             tot_release[counter] += shortage - return_use#releases are shortages above the available return flows
             running_returns[counter] += shortage * self.structures_objects[station_id].return_fraction.loc[month_id, station_id]#add return flows from this consumption to the available return flows
+            individual_shortage.append(shortage)
+            individual_compensatory.append(shortage - return_use)
+            individual_stations.append(station_id)
+            individual_dates.append(index)
           counter += 1
     #add compensatory releases to file
     leased_shortfalls.loc['Compensatory', 'change'] = np.sum(tot_release)
+    individual_shortfalls = pd.DataFrame()
+    individual_shortfalls['shortage'] = individual_shortage
+    individual_shortfalls['compensatory'] = individual_compensatory
+    individual_shortfalls['stations'] = individual_stations
+    individual_shortfalls['dates'] = individual_dates
+    individual_shortfalls.to_csv('results_' + folder_name + '/individual_changes.csv')
     
     delivery_scenarios = pd.DataFrame(delivery_scenarios)
     delivery_scenarios.to_csv('results_' + folder_name + '/total_export_deliveries.csv')
@@ -1042,13 +1121,6 @@ class Basin():
             #find any extra inflow to this station that is not diverted at this station or part of routed reservoir releases
             extra_flow = max(max(self.structures_objects[station_id].adaptive_monthly_inflows.loc[index_use, 'inflows'] - self.structures_objects[station_id].routed_plans.loc[index_use, 'plan'], 0.0) - self.structures_objects[str(station_id)].adaptive_monthly_deliveries.loc[index_use, 'deliveries'], 0.0)
             #if the extra flow is less than the reduction in flow from return flows, this structure could be at risk of shortfalls due to return flow uncertainty
-            print(index_use.year, end = " ")
-            print(index_use.month, end = " ")
-            print(row['structure'], end = " ")
-            print(station_id, end = " ")
-            print(total_return_flow, end = " ")
-            print(extra_flow, end = " ")
-            print(np.sum(np.asarray(structure_loss_volumes)))
             if extra_flow < total_return_flow:
               total_called = {}
               max_called = {}
@@ -1232,10 +1304,10 @@ class Basin():
       wang_transform_multipliers[x] = adjusted_pbs / (float(x + 1)/float(num_years_shortfalls_obs))
 
     #load shortages from return flow uncertainty estimation
-    all_losses = pd.read_csv('results_' + thresh_use + '/option_losses.csv')  
-    all_losses['datetime_use'] = pd.to_datetime(all_losses['priority_delivery'])
+    all_losses = pd.read_csv('results_' + thresh_use + '/individual_changes.csv')  
+    all_losses['datetime_use'] = pd.to_datetime(all_losses['dates'])
     all_losses['year_use'] = pd.DatetimeIndex(all_losses['datetime_use']).year
-    user_list = all_losses['structure'].unique().tolist()
+    user_list = all_losses['stations'].unique().tolist()
     
     #remove any shortages to Lake Granby
     try:
@@ -1249,12 +1321,12 @@ class Basin():
     #for each structure with return flow risk, calculate expected value + loading from wang transform
     for struct_id in user_list:
       #total losses
-      this_user_losses = all_losses[all_losses['structure'] == struct_id]
+      this_user_losses = all_losses[all_losses['stations'] == struct_id]
       annual_loss = np.zeros(year_end + 1 - year_start)
       #annualize the return flow risk
       for year_num in range(year_start, year_end + 1):
         this_year_losses = this_user_losses[this_user_losses['year_use'] == year_num]
-        annual_loss[year_num - year_start] = np.sum(this_year_losses['delivery']) * (-1.0)#multiply by -1 to sort from high to low
+        annual_loss[year_num - year_start] = np.sum(this_year_losses['shortage']) * (-1.0) * 0.1#multiply by -1 to sort from high to low
       #sort losses from biggest to lowest (sorting the negative loss series)
       sorted_losses = np.sort(annual_loss)
       #to find 'loading' on contract, multiply each value in annual loss cdf (sorted from largest to smallest) by the wang transform
@@ -1263,7 +1335,7 @@ class Basin():
       for year_num in range(0, year_end + 1 - year_start):
         total_loading_loss += wang_transform_multipliers[year_num] * sorted_losses[year_num] * (-1.0)#now we want positive values
       #the 'loading' is just the expected value of the wang-transformed distribution divided by the expected value of the actual distribution
-      total_loss = np.sum(this_user_losses['delivery'])
+      total_loss = np.sum(this_user_losses['shortage'])
       #each structure has an independent 'loading' based on the frequency and magnitude of the potential losses
       if total_loss > 0.0:
         loading_values[loading_counter] = total_loading_loss / total_loss
@@ -1272,16 +1344,161 @@ class Basin():
       loading_counter += 1
       #the 'losses' are in units of AF and need to be translated into $ based on the marginal value of the use at the structure 
       if 'Irrigation' in self.structures_objects[struct_id].structure_types:
-        cost_list.append(150.0 * total_loading_loss / float(year_end + 1 - year_start))
+        cost_list.append(200.0 * total_loading_loss / float(year_end + 1 - year_start))
       elif 'Minimum Flow' in self.structures_objects[struct_id].structure_types:
-        cost_list.append(2000.0 * total_loading_loss / float(year_end + 1 - year_start))
+        cost_list.append(115.0 * total_loading_loss / float(year_end + 1 - year_start))
       elif 'Municipal' in self.structures_objects[struct_id].structure_types:
-        cost_list.append(1000.0 * total_loading_loss / float(year_end + 1 - year_start))
+        cost_list.append(900.0 * total_loading_loss / float(year_end + 1 - year_start))
       else:
-        cost_list.append(1000.0 * total_loading_loss / float(year_end + 1 - year_start))
+        cost_list.append(900.0 * total_loading_loss / float(year_end + 1 - year_start))
       
     #write payments and loading for each structure to file 
     option_payments = pd.DataFrame(index = user_list)
     option_payments['annual payment'] = cost_list
     option_payments['loading'] = loading_values
     option_payments.to_csv('results_' + thresh_use + '/option_payments_facilitators.csv')
+    
+    
+  def find_option_price_facilitator_2(self, input_data_dictionary, thresh_use, year_start, year_end):
+    structures_ucrb = gpd.read_file(input_data_dictionary['structures'])
+    irrigation_ucrb = gpd.read_file(input_data_dictionary['irrigation'])
+    ditches_ucrb = gpd.read_file(input_data_dictionary['ditches'])
+    other_structures = list(structures_ucrb['WDID'].astype(str))
+    irrigation_structures = list(irrigation_ucrb['SW_WDID1'].astype(str))
+    ditch_structures = list(ditches_ucrb['wdid'].astype(str))
+    
+    #get list of individual structure ids that make up each 'aggregated' structure in StateMod
+    #the dictionary keys are the aggregated StateMod structure ids, the lists are the individual structures listed in the structure lists
+    agg_diversions = pd.read_csv(input_data_dictionary['aggregated_diversions'])
+    aggregated_diversions = {}
+    for index, row in agg_diversions.iterrows():
+      if row['statemod_diversion'] in aggregated_diversions:
+        aggregated_diversions[row['statemod_diversion']].append(str(row['individual_diversion']))
+      else:
+        aggregated_diversions[row['statemod_diversion']] = [str(row['individual_diversion']), ]
+
+    #this function calculates the annual upfront option fee to compensate for option seller risk
+    #wang transform is used to risk-weight probability distributions
+    #if you want to know more than that google it yourself
+    num_years_shortfalls_obs = 64
+    wang_transform_multipliers = np.ones(num_years_shortfalls_obs)
+    #shift probability distributions by 0.25 on the z-score scale
+    #this is for a distribution with 64 discrete annual observations - facilitator distribution
+    for x in range(0, num_years_shortfalls_obs):
+      new_z_value = norm.ppf(float(x+1) / float(num_years_shortfalls_obs))
+      adjusted_pbs = norm.cdf(new_z_value + 0.25)
+      wang_transform_multipliers[x] = adjusted_pbs / (float(x + 1)/float(num_years_shortfalls_obs))
+
+    #load shortages from return flow uncertainty estimation
+    all_losses = pd.read_csv('results_' + thresh_use + '/individual_changes.csv')  
+    all_losses['datetime_use'] = pd.to_datetime(all_losses['dates'])
+    all_losses['year_use'] = pd.DatetimeIndex(all_losses['datetime_use']).year
+    user_list = all_losses['stations'].unique().tolist()
+    
+    #remove any shortages to Lake Granby
+    try:
+      user_list.remove('5104055')
+    except:
+      pass
+    #contract loading for each facilitator option contract
+    loading_values = np.zeros(len(user_list))
+    loading_counter = 0
+    cost_list = []
+
+
+    #assign a 'type' to each structure object
+    for structure_name in user_list:
+      self.structures_objects = {}
+      self.structures_objects[structure_name] = Structure(structure_name, 'unknown')
+      self.structures_objects[structure_name].structure_types = []      
+      #get list of individual structures (equal to the structure name for normal StateMod structure objects, list of many small structures for aggregated StateMod structure object)
+      if structure_name in aggregated_diversions:
+        ind_structure_list = aggregated_diversions[structure_name]
+      else:
+        ind_structure_list = [structure_name,]    
+      #for each individual structure, assign type based on the 'list' its in, within specific values assigned to those not in particular structure files
+      #if structure is irrigation, find total crop acreage
+      for ind_structure in ind_structure_list:
+        #if structure is in irrigation list, its an irrigation type
+        if ind_structure in irrigation_structures:
+          self.structures_objects[structure_name].structure_types.append('Irrigation')
+        #if structure is in ditch list, its also an irrigation type
+        elif ind_structure in ditch_structures:
+          self.structures_objects[structure_name].structure_types.append('Irrigation')
+        #if structure is in other structure types, assign type based on data about structure
+        elif ind_structure in other_structures:
+          this_structure = structures_ucrb[structures_ucrb['WDID'] == ind_structure]
+          if this_structure.loc[this_structure.index[0], 'StructType'] == 'Reservoir':
+            self.structures_objects[structure_name].structure_types.append('Reservoir')
+          elif this_structure.loc[this_structure.index[0], 'StructType'] == 'Minimum Flow':
+            self.structures_objects[structure_name].structure_types.append('Minimum Flow')
+          elif this_structure.loc[this_structure.index[0], 'StructType'] == 'Power Plant':
+            self.structures_objects[structure_name].structure_types.append('Municipal')            
+          else:
+            #assign remainder individually
+            if structure_name == '36000662_D' or structure_name == '38000880_D' or structure_name == '5000734_D' or structure_name == '5300555_D' or structure_name == '3900532' or structure_name == '5100941':
+              self.structures_objects[structure_name].structure_types.append('Irrigation')
+            elif structure_name[:4] == '3600' or structure_name[:4] == '3601' or structure_name[:4] == '3700' or structure_name[:4] == '3800' or structure_name[:4] == '3801' or structure_name[:4] == '5300' or structure_name[:4] == '7200' or structure_name[:4] == '7201' or structure_name == '3900967' or structure_name == '5100958' or structure_name == '5101070':
+              self.structures_objects[structure_name].structure_types.append('Municipal')
+            elif structure_name[:4] == '3604' or structure_name[:4] == '3704' or structure_name[:4] == '3804' or structure_name[:4] == '5104' or structure_name[:4] == '7204':
+              self.structures_objects[structure_name].structure_types.append('Export')
+            elif structure_name[:6] == '36_ADC' or  structure_name[:6] == '37_ADC' or structure_name[:6] == '39_ADC' or structure_name[:6] == '45_ADC' or structure_name[:6] == '50_ADC' or structure_name[:6] == '51_ADC' or structure_name[:6] == '52_ADC' or structure_name[:6] == '53_ADC' or structure_name[:6] == '70_ADC' or structure_name[:6] == '72_ADC':
+              self.structures_objects[structure_name].structure_types.append('Irrigation')
+        #for others, assign types individually
+        else:
+          if ind_structure[3:6] == 'ARC' or ind_structure[3:6] == 'ASC' or ind_structure[-2:] == 'HU' or ind_structure == '7203904AG' or ind_structure == '7204033AG' or ind_structure == '36GMCON':
+            self.structures_objects[structure_name].structure_types.append('Reservoir')
+          elif ind_structure[3:6] == 'AMC' or ind_structure[-2:] == 'PL' or  ind_structure[:7] == '5003668' or ind_structure == '70FD1' or ind_structure == '70FD2' or ind_structure == 'CSULimitPLN' or ind_structure == 'HUPLimitPLN' or ind_structure == 'ColRivPln' or ind_structure == '3903508_Ex':
+            self.structures_objects[structure_name].structure_types.append('None')
+          elif ind_structure[-2:] == '_I':
+            self.structures_objects[structure_name].structure_types.append('Irrigation')
+          elif ind_structure[-2:] == '_M' or ind_structure == 'MoffatBF' or ind_structure == 'Baseflow' or ind_structure == '3702059_2' or ind_structure == '5300584P' or ind_structure == '3804625M2' or ind_structure == '7202001_2' or ind_structure[:2] == '09' or ind_structure[-3:] == 'Dwn':
+            self.structures_objects[structure_name].structure_types.append('Minimum Flow')
+          elif ind_structure == '3604683SU' or ind_structure == '3804625SU':
+            self.structures_objects[structure_name].structure_types.append('Export')
+          elif ind_structure == '36_KeyMun' or ind_structure[:6] == '37VAIL' or ind_structure[:7] == '3803713' or ind_structure == '4200520' or ind_structure == '4200541' or ind_structure == '72_GJMun' or ind_structure == '72_UWCD' or ind_structure == 'ChevDem':
+            self.structures_objects[structure_name].structure_types.append('Municipal')
+          elif ind_structure[:7] == '7200813':
+            if ind_structure == '7200813':
+              self.structures_objects[structure_name].structure_types.append('Irrigation')
+            else:
+              self.structures_objects[structure_name].structure_types.append('Municipal')              
+
+      #total losses
+      this_user_losses = all_losses[all_losses['stations'] == structure_name]
+      annual_loss = np.zeros(year_end + 1 - year_start)
+      #annualize the return flow risk
+      for year_num in range(year_start, year_end + 1):
+        this_year_losses = this_user_losses[this_user_losses['year_use'] == year_num]
+        annual_loss[year_num - year_start] = np.sum(this_year_losses['shortage']) * (-1.0) * 0.1#multiply by -1 to sort from high to low
+      #sort losses from biggest to lowest (sorting the negative loss series)
+      sorted_losses = np.sort(annual_loss)
+      #to find 'loading' on contract, multiply each value in annual loss cdf (sorted from largest to smallest) by the wang transform
+      #wang transform gives higher weight to more extreme (largest) losses as a risk-weighting
+      total_loading_loss = 0.0
+      for year_num in range(0, year_end + 1 - year_start):
+        total_loading_loss += wang_transform_multipliers[year_num] * sorted_losses[year_num] * (-1.0)#now we want positive values
+      #the 'loading' is just the expected value of the wang-transformed distribution divided by the expected value of the actual distribution
+      total_loss = np.sum(this_user_losses['shortage'])
+      #each structure has an independent 'loading' based on the frequency and magnitude of the potential losses
+      if total_loss > 0.0:
+        loading_values[loading_counter] = total_loading_loss / total_loss
+      else:
+        loading_values[loading_counter] = 0.0
+      loading_counter += 1
+      #the 'losses' are in units of AF and need to be translated into $ based on the marginal value of the use at the structure 
+      if 'Irrigation' in self.structures_objects[structure_name].structure_types:
+        cost_list.append(200.0 * total_loading_loss / float(year_end + 1 - year_start))
+      elif 'Minimum Flow' in self.structures_objects[structure_name].structure_types:
+        cost_list.append(115.0 * total_loading_loss / float(year_end + 1 - year_start))
+      elif 'Municipal' in self.structures_objects[structure_name].structure_types:
+        cost_list.append(900.0 * total_loading_loss / float(year_end + 1 - year_start))
+      else:
+        cost_list.append(900.0 * total_loading_loss / float(year_end + 1 - year_start))
+      
+    #write payments and loading for each structure to file 
+    option_payments = pd.DataFrame(index = user_list)
+    option_payments['annual payment'] = cost_list
+    option_payments['loading'] = loading_values
+    option_payments.to_csv('results_' + thresh_use + '/option_payments_facilitators_updated.csv')
+
